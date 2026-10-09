@@ -53,6 +53,11 @@ export class MemoryCollabStore implements CollabStore {
     return campaign ? this.withCounts(campaign) : null;
   }
 
+  async findCampaignByChainId(chainCampaignId: string) {
+    const campaign = this.campaigns.find((item) => item.chainCampaignId === chainCampaignId.toLowerCase());
+    return campaign ? this.withCounts(campaign) : null;
+  }
+
   async updateCampaignIfStatus(id: string, expected: CampaignLifecycle, update: CampaignUpdate) {
     const campaign = this.campaigns.find((item) => item.id === id);
     if (!campaign || campaign.status !== expected) return null;

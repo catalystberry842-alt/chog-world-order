@@ -15,7 +15,8 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "contracts:build": "cd contracts && forge build",
-    "contracts:test": "cd contracts && forge test -vv"
+    "contracts:test": "cd contracts && forge test -vv",
+    "contracts:abi": "node scripts/export-abi.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

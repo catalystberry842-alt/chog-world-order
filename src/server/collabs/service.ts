@@ -22,6 +22,8 @@ import {
 } from "@/server/collabs/store";
 import { badRequest, conflict, DuplicateEvidenceError, forbidden, notFound, serviceUnavailable } from "@/server/errors";
 import { issueForEvidence } from "@/server/passport/service";
+import { paymentsForDeliverables, startRegistration } from "@/server/payments/service";
+import type { RegistrationInstructions } from "@/lib/collabs/types";
 import type { PassportStore } from "@/server/passport/store";
 import type { Services } from "@/server/services";
 import type { CampaignCategory } from "@/lib/types";
@@ -191,6 +193,9 @@ export async function updateDraft(services: Services, auth: AuthContext, id: str
   const store = requireStore(services);
   const campaign = await ownedCampaign(collabs, auth, id);
   if (campaign.status !== "draft") throw conflict("not_draft", "Only draft campaigns can be edited.");
+  if (campaign.registrationStatus === "pending" || campaign.registrationStatus === "confirmed") {
+    throw conflict("registration_started", "This draft is being registered on-chain and can no longer be edited.");
+  }
   const updated = await collabs.updateCampaignIfStatus(id, "draft", toContent(input));
   if (!updated) throw conflict("not_draft", "Only draft campaigns can be edited.");
   return toCampaignView(store, { ...updated, applicants: campaign.applicants, accepted: campaign.accepted });
@@ -213,20 +218,39 @@ export function publicationProblems(campaign: CampaignContent, now: Date): strin
 }
 
 /**
- * Publishes a draft after validation. Owner only. On-chain registration is
- * tracked separately (registration status) and handled by the payments
- * integration.
+ * Publishes a draft after validation. Owner only.
+ *
+ * When the CampaignPayments contract is configured, publication goes through
+ * on-chain registration: the draft moves to registration "pending" and the
+ * owner's wallet must register it. The campaign becomes "published" only
+ * after the CampaignRegistered event is verified (see confirmRegistration).
+ * Without a configured contract, campaigns publish off-chain and are clearly
+ * marked as not registered.
  */
-export async function publishCampaign(services: Services, auth: AuthContext, id: string) {
+export async function publishCampaign(
+  services: Services,
+  auth: AuthContext,
+  id: string,
+): Promise<{ campaign: CampaignView; registration: RegistrationInstructions | null }> {
   const collabs = requireCollabs(services);
   const store = requireStore(services);
   const campaign = await ownedCampaign(collabs, auth, id);
   if (campaign.status !== "draft") throw conflict("not_draft", "Only draft campaigns can be published.");
   const problems = publicationProblems(campaign, services.now());
   if (problems.length > 0) throw badRequest(problems.join(" "), "not_publishable");
+
+  if (services.config.paymentsContract.enabled) {
+    const registration = await startRegistration(services, auth, campaign);
+    const refreshed = (await collabs.findCampaign(id))!;
+    return { campaign: await toCampaignView(store, refreshed), registration };
+  }
+
   const updated = await collabs.updateCampaignIfStatus(id, "draft", { status: "published", publishedAt: services.now() });
   if (!updated) throw conflict("not_draft", "Only draft campaigns can be published.");
-  return toCampaignView(store, { ...updated, applicants: campaign.applicants, accepted: campaign.accepted });
+  return {
+    campaign: await toCampaignView(store, { ...updated, applicants: campaign.applicants, accepted: campaign.accepted }),
+    registration: null,
+  };
 }
 
 /** Public campaign, or a draft for its owner. */
@@ -266,13 +290,20 @@ export async function ownerDashboard(services: Services, auth: AuthContext) {
   const store = requireStore(services);
   const campaigns = await collabs.listCampaignsByOwner(auth.user.id);
   return Promise.all(
-    campaigns.map(async (campaign) => ({
-      campaign: await toCampaignView(store, campaign),
-      applications: await Promise.all(
-        (await collabs.listApplications({ campaignId: campaign.id })).map((app) => toApplicationView(store, app)),
-      ),
-      deliverables: await toDeliverableViews(store, collabs, await collabs.listDeliverables({ campaignId: campaign.id })),
-    })),
+    campaigns.map(async (campaign) => {
+      const deliverables = await collabs.listDeliverables({ campaignId: campaign.id });
+      return {
+        campaign: await toCampaignView(store, campaign),
+        applications: await Promise.all(
+          (await collabs.listApplications({ campaignId: campaign.id })).map((app) => toApplicationView(store, app)),
+        ),
+        deliverables: await toDeliverableViews(store, collabs, deliverables),
+        payments: await paymentsForDeliverables(
+          services,
+          deliverables.filter((item) => item.status === "accepted").map((item) => item.id),
+        ),
+      };
+    }),
   );
 }
 
@@ -320,10 +351,12 @@ export async function myParticipation(services: Services, auth: AuthContext, cam
   const collabs = requireCollabs(services);
   const store = requireStore(services);
   const [app] = await collabs.listApplications({ campaignId, applicantId: auth.user.id });
-  if (!app) return { application: null, deliverables: [] };
+  if (!app) return { application: null, deliverables: [], payments: [] };
+  const deliverables = await collabs.listDeliverables({ applicationId: app.id });
   return {
     application: await toApplicationView(store, app),
-    deliverables: await toDeliverableViews(store, collabs, await collabs.listDeliverables({ applicationId: app.id })),
+    deliverables: await toDeliverableViews(store, collabs, deliverables),
+    payments: await paymentsForDeliverables(services, deliverables.map((item) => item.id)),
   };
 }
 

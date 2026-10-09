@@ -1,5 +1,12 @@
 /** Browser client for the Collab Board API. Same-origin; the session cookie is sent automatically. */
-import type { ApplicationView, CampaignView, DeliverableView } from "@/lib/collabs/types";
+import type {
+  ApplicationView,
+  CampaignView,
+  DeliverableView,
+  PaymentInstructions,
+  PaymentView,
+  RegistrationInstructions,
+} from "@/lib/collabs/types";
 import { ApiError } from "@/lib/client/passport-api";
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -37,15 +44,26 @@ export type CampaignFormInput = {
   deadline: string;
 };
 
-export type DashboardEntry = { campaign: CampaignView; applications: ApplicationView[]; deliverables: DeliverableView[] };
+export type DashboardEntry = {
+  campaign: CampaignView;
+  applications: ApplicationView[];
+  deliverables: DeliverableView[];
+  payments: PaymentView[];
+};
 
 export const collabsApi = {
   dashboard: () => call<{ campaigns: DashboardEntry[] }>("/api/campaigns/mine"),
   create: (input: CampaignFormInput) => send<{ campaign: CampaignView }>("/api/campaigns", "POST", input),
   update: (id: string, input: CampaignFormInput) => send<{ campaign: CampaignView }>(`/api/campaigns/${id}`, "PATCH", input),
-  publish: (id: string) => send<{ campaign: CampaignView }>(`/api/campaigns/${id}/publish`, "POST", {}),
+  publish: (id: string) =>
+    send<{ campaign: CampaignView; registration: RegistrationInstructions | null }>(`/api/campaigns/${id}/publish`, "POST", {}),
+  /** Asks the server to verify the registration. The hash is only a hint. */
+  checkRegistration: (id: string, txHash?: string) =>
+    send<{ campaign: CampaignView }>(`/api/campaigns/${id}/registration`, "POST", txHash ? { txHash } : {}),
   myParticipation: (campaignId: string) =>
-    call<{ application: ApplicationView | null; deliverables: DeliverableView[] }>(`/api/campaigns/${campaignId}/applications`),
+    call<{ application: ApplicationView | null; deliverables: DeliverableView[]; payments: PaymentView[] }>(
+      `/api/campaigns/${campaignId}/applications`,
+    ),
   apply: (campaignId: string, input: { proposal: string; evidenceIds: string[] }) =>
     send<{ application: ApplicationView }>(`/api/campaigns/${campaignId}/applications`, "POST", input),
   reviewApplication: (id: string, input: { decision: "accept" | "reject"; reason: string }) =>
@@ -54,4 +72,9 @@ export const collabsApi = {
     send<{ deliverable: DeliverableView }>(`/api/applications/${applicationId}/deliverables`, "POST", input),
   reviewDeliverable: (id: string, input: { decision: "accept" | "reject"; reason: string }) =>
     send<{ deliverable: DeliverableView }>(`/api/deliverables/${id}/review`, "POST", input),
+  preparePayment: (deliverableId: string) => send<PaymentInstructions>(`/api/deliverables/${deliverableId}/payment`, "POST", {}),
+  /** Reports the wallet's transaction hash. The server verifies it on-chain; the hash alone proves nothing. */
+  reportPayment: (paymentId: string, txHash: string) =>
+    send<{ payment: PaymentView }>(`/api/payments/${paymentId}/transaction`, "POST", { txHash }),
+  payment: (paymentId: string) => call<{ payment: PaymentView }>(`/api/payments/${paymentId}`),
 };

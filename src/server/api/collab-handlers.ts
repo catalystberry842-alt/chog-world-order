@@ -12,6 +12,8 @@ import {
   campaignListQuerySchema,
   decisionSchema,
   deliverableSchema,
+  registrationHintSchema,
+  txHashSchema,
 } from "@/server/api/schemas";
 import {
   applyToCampaign,
@@ -27,6 +29,16 @@ import {
   submitDeliverable,
   updateDraft,
 } from "@/server/collabs/service";
+import {
+  confirmRegistration,
+  getPaymentStatus,
+  preparePayment,
+  reportPaymentTransaction,
+} from "@/server/payments/service";
+import { runIndexer } from "@/server/payments/indexer";
+import { getCampaign as readCampaign } from "@/server/collabs/service";
+import { timingSafeEqual } from "node:crypto";
+import { HttpError } from "@/server/errors";
 import type { Services } from "@/server/services";
 
 export const getCampaigns = (request: Request, services: Services) =>
@@ -64,7 +76,7 @@ export const postPublish = (request: Request, services: Services, id: string) =>
   handle(async () => {
     assertSameOrigin(request, services);
     const auth = await requireAuth(request, services);
-    return json({ campaign: await publishCampaign(services, auth, id) });
+    return json(await publishCampaign(services, auth, id));
   });
 
 export const getMyCampaigns = (request: Request, services: Services) =>
@@ -115,4 +127,56 @@ export const getCampaignDeliverables = (request: Request, services: Services, ca
   handle(async () => {
     const auth = await requireAuth(request, services);
     return json({ deliverables: await listDeliverablesFor(services, auth, campaignId) });
+  });
+
+// Payments ---------------------------------------------------------------------
+
+/**
+ * Checks a campaign's on-chain registration. The optional transaction hash is
+ * only a hint: the server verifies the receipt and CampaignRegistered event.
+ */
+export const postRegistration = (request: Request, services: Services, id: string) =>
+  handle(async () => {
+    assertSameOrigin(request, services);
+    const auth = await requireAuth(request, services);
+    const body = await readBody(request, registrationHintSchema);
+    await confirmRegistration(services, auth, id, body.txHash);
+    return json({ campaign: await readCampaign(services, id, auth.user.id) });
+  });
+
+/** Payment instructions for an accepted deliverable. Owner only. */
+export const postPaymentIntent = (request: Request, services: Services, deliverableId: string) =>
+  handle(async () => {
+    assertSameOrigin(request, services);
+    const auth = await requireAuth(request, services);
+    return json(await preparePayment(services, auth, deliverableId));
+  });
+
+/** The owner's wallet returned a transaction hash. Verified on the server; never trusted as proof. */
+export const postPaymentTransaction = (request: Request, services: Services, paymentId: string) =>
+  handle(async () => {
+    assertSameOrigin(request, services);
+    const auth = await requireAuth(request, services);
+    const body = await readBody(request, txHashSchema);
+    return json({ payment: await reportPaymentTransaction(services, auth, paymentId, body.txHash) });
+  });
+
+export const getPayment = (request: Request, services: Services, paymentId: string) =>
+  handle(async () => {
+    const auth = await requireAuth(request, services);
+    return json({ payment: await getPaymentStatus(services, auth, paymentId) });
+  });
+
+/** Scheduled indexer run. Requires `Authorization: Bearer <CRON_SECRET>`. */
+export const runIndexerRequest = (request: Request, services: Services) =>
+  handle(async () => {
+    const secret = services.config.cronSecret;
+    if (!secret) throw new HttpError(503, "not_configured", "CRON_SECRET is not configured.");
+    const given = Buffer.from(request.headers.get("authorization") ?? "");
+    const expected = Buffer.from(`Bearer ${secret}`);
+    if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+      throw new HttpError(401, "unauthorized", "Missing or invalid indexer credentials.");
+    }
+    const result = await runIndexer(services);
+    return json(result, { status: result.status === "error" ? 502 : result.status === "unavailable" ? 503 : 200 });
   });

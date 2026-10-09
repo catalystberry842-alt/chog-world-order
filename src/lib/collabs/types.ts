@@ -75,3 +75,52 @@ export type CampaignListPage = {
   total: number;
   source: DataSource;
 };
+
+export type PaymentStatus = "awaiting-transaction" | "pending-confirmation" | "confirmed" | "failed" | "mismatch";
+
+/** A campaign payment as shown in the UI. Only "confirmed" means the server verified the transfer. */
+export type PaymentView = {
+  id: string;
+  deliverableId: string;
+  campaignId: string;
+  status: PaymentStatus;
+  chainId: number;
+  contractAddress: string;
+  token: { key: string; symbol: string; decimals: number; address: string };
+  /** Base units, decimal string. */
+  amount: string;
+  creatorAddress: string;
+  payerAddress: string;
+  deliverableRef: string;
+  /** Hash reported by the browser; unverified. */
+  submittedTxHash: string | null;
+  /** Verified proof. */
+  txHash: string | null;
+  logIndex: number | null;
+  blockNumber: string | null;
+  explorerUrl: string | null;
+  statusReason: string | null;
+  confirmedAt: string | null;
+};
+
+/** What the owner's wallet must sign. The server builds it; the browser only relays it. */
+export type PaymentInstructions = {
+  payment: PaymentView;
+  call: {
+    chainId: number;
+    address: string;
+    functionName: "payNative" | "payToken";
+    args: string[];
+    /** Native value in wei, decimal string ("0" for ERC-20). */
+    value: string;
+  } | null;
+  /** ERC-20 approval needed before payToken, when the allowance is too low. */
+  approval: { token: string; spender: string; amount: string } | null;
+};
+
+export type RegistrationInstructions = {
+  chainId: number;
+  contractAddress: string;
+  salt: string;
+  chainCampaignId: string;
+};

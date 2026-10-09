@@ -307,6 +307,7 @@ model Campaign {
 
   applications CampaignApplication[]
   submissions  Deliverable[]
+  payments     CampaignPayment[]
 
   @@index([status, deadline])
   @@index([category, status])
@@ -358,6 +359,7 @@ model Deliverable {
   updatedAt     DateTime            @updatedAt
 
   reviews DeliverableReview[]
+  payment CampaignPayment?
 
   /// The same content cannot be submitted twice for one application.
   @@unique([applicationId, contentHash])
@@ -377,4 +379,87 @@ model DeliverableReview {
   createdAt     DateTime          @default(now())
 
   @@index([deliverableId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Payments (CampaignPayments contract)
+// ---------------------------------------------------------------------------
+
+/// AWAITING_TRANSACTION: intent prepared, no verified transaction yet.
+/// PENDING_CONFIRMATION: matching CreatorPaid event found, waiting for confirmations.
+/// CONFIRMED: event verified and confirmed. Only this status counts as paid.
+/// FAILED: the hinted transaction reverted or was not a valid payment; a new attempt is allowed.
+/// MISMATCH: a CreatorPaid event for this deliverable had the wrong recipient, token, amount, or payer.
+enum PaymentStatus {
+  AWAITING_TRANSACTION
+  PENDING_CONFIRMATION
+  CONFIRMED
+  FAILED
+  MISMATCH
+}
+
+/// The expected payment for one accepted deliverable, and its verified on-chain proof.
+model CampaignPayment {
+  id              String        @id @default(cuid())
+  campaignId      String
+  campaign        Campaign      @relation(fields: [campaignId], references: [id], onDelete: Restrict)
+  /// One payment per accepted deliverable.
+  deliverableId   String        @unique
+  deliverable     Deliverable   @relation(fields: [deliverableId], references: [id], onDelete: Restrict)
+  chainId         Int
+  contractAddress String
+  chainCampaignId String
+  /// Zero address for native MON.
+  tokenAddress    String
+  tokenKey        String
+  /// Expected amount in base units.
+  amount          Decimal       @db.Decimal(78, 0)
+  creatorAddress  String
+  payerAddress    String
+  deliverableRef  String
+  status          PaymentStatus @default(AWAITING_TRANSACTION)
+  /// Transaction hash reported by the browser. A hint only, never proof.
+  submittedTxHash String?
+  /// Verified on-chain proof (set from the CreatorPaid log).
+  txHash          String?
+  logIndex        Int?
+  blockNumber     BigInt?
+  blockHash       String?
+  failureReason   String?
+  confirmedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  /// A single on-chain log can prove at most one payment.
+  @@unique([txHash, logIndex])
+  @@index([status])
+  @@index([chainCampaignId, deliverableRef])
+}
+
+/// Raw contract events seen by the indexer. Unique per log, so re-indexing is harmless.
+model ChainEvent {
+  id              String   @id @default(cuid())
+  chainId         Int
+  contractAddress String
+  eventName       String
+  txHash          String
+  logIndex        Int
+  blockNumber     BigInt
+  blockHash       String
+  /// Decoded event arguments (bigints as strings).
+  args            Json
+  /// What the indexer did with it, e.g. "confirmed-payment", "mismatch", "unmatched".
+  outcome         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([chainId, txHash, logIndex])
+  @@index([eventName, blockNumber])
+}
+
+/// Last block the indexer fully processed, per contract.
+model IndexerCursor {
+  id        String   @id
+  lastBlock BigInt
+  updatedAt DateTime @updatedAt
 }

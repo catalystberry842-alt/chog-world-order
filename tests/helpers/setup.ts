@@ -5,6 +5,9 @@ import { monad } from "viem/chains";
 import type { PublicEvidence, PublicPassport } from "@/lib/passport/types";
 import type { ServerConfig } from "@/server/config";
 import { MemoryCollabStore } from "@/server/collabs/memory-store";
+import { MemoryPaymentStore } from "@/server/payments/memory-store";
+import type { ChainReader } from "@/server/payments/chain";
+import { paymentsContractConfig } from "@/lib/contracts/campaign-payments";
 import { MemoryPassportStore } from "@/server/passport/memory-store";
 import type { PassportStore } from "@/server/passport/store";
 import type { Services } from "@/server/services";
@@ -20,11 +23,24 @@ export const testConfig: ServerConfig = {
   appOrigin: ORIGIN,
   sessionSecret: "test-secret-test-secret-test-secret-0123",
   monadRpcUrl: null,
+  paymentsContract: { enabled: false, reason: "not configured in tests" },
+  paymentConfirmations: 2,
+  paymentsDeployBlock: null,
+  cronSecret: "test-cron-secret-test-cron-secret-0123",
 };
 
 export function makeServices(
-  options: { store?: PassportStore | null; onchainClient?: OnchainClient | null; apps?: SupportedApp[]; now?: Date } = {},
-): Services & { memory: MemoryPassportStore; collabMemory: MemoryCollabStore } {
+  options: {
+    store?: PassportStore | null;
+    onchainClient?: OnchainClient | null;
+    apps?: SupportedApp[];
+    now?: Date;
+    /** CampaignPayments address; omit to leave payments disabled. */
+    paymentsContract?: string;
+    chain?: ChainReader | null;
+    confirmations?: number;
+  } = {},
+): Services & { memory: MemoryPassportStore; collabMemory: MemoryCollabStore; paymentMemory: MemoryPaymentStore } {
   // With a fixed start time the clock still ticks 1 ms per read, like a real clock,
   // so records created in sequence get distinct, ordered timestamps.
   const now = (() => {
@@ -35,13 +51,22 @@ export function makeServices(
   })();
   const memory = new MemoryPassportStore();
   const collabMemory = new MemoryCollabStore(now);
+  const paymentMemory = new MemoryPaymentStore(now);
   const store = options.store === undefined ? memory : options.store;
   return {
     memory,
     collabMemory,
-    config: testConfig,
+    paymentMemory,
+    config: {
+      ...testConfig,
+      paymentsContract: options.paymentsContract ? paymentsContractConfig(options.paymentsContract) : testConfig.paymentsContract,
+      paymentConfirmations: options.confirmations ?? testConfig.paymentConfirmations,
+      paymentsDeployBlock: BigInt(0),
+    },
     store,
     collabs: options.store === null ? null : collabMemory,
+    payments: options.store === null ? null : paymentMemory,
+    chain: options.chain ?? null,
     handlers: createHandlerRegistry({ onchainClient: options.onchainClient ?? null, apps: options.apps ?? [] }),
     // Real EOA signature verification (test keys are generated per run, never persisted).
     verifySignature: (input) => verifyMessage(input),

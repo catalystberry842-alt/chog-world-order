@@ -7,6 +7,9 @@ import { requireRole, requireStore, type AuthContext } from "@/server/auth/sessi
 import { evidenceReference } from "@/server/passport/evidence-reference";
 import type { EvidenceRecord, PassportStore, ReputationRecord, StampRecord, UserRecord } from "@/server/passport/store";
 import { buildPublicReputation, recalculateReputation } from "@/server/reputation/service";
+import { formatTokenUnits } from "@/lib/collabs/rules";
+import type { PaymentView } from "@/lib/collabs/types";
+import { toPaymentView } from "@/server/payments/view";
 import type { Services } from "@/server/services";
 import type { EvidenceClaim } from "@/server/verification/types";
 
@@ -85,6 +88,27 @@ export async function getPassport(services: Services, rawAddress: string, viewer
   ]);
 
   const earned = pointsByEvidence(ledger);
+  // Campaign evidence references its deliverable id; attach the payment for it, if any.
+  const campaignDeliverables = evidence.filter((record) => record.kind === "campaign-deliverable").map((record) => record.reference);
+  const paymentsByDeliverable = new Map<string, PaymentView>();
+  if (services.payments && campaignDeliverables.length > 0) {
+    for (const payment of await services.payments.listPaymentsByDeliverables(campaignDeliverables)) {
+      paymentsByDeliverable.set(payment.deliverableId, toPaymentView(payment));
+    }
+  }
+  const paymentFor = (record: EvidenceRecord): PublicEvidence["payment"] => {
+    const payment = record.kind === "campaign-deliverable" ? paymentsByDeliverable.get(record.reference) : undefined;
+    // Public viewers only see confirmed payments; the owner also sees pending ones.
+    if (!payment || (!isOwner && payment.status !== "confirmed")) return null;
+    return {
+      status: payment.status,
+      amount: formatTokenUnits(payment.amount, payment.token),
+      tokenSymbol: payment.token.symbol,
+      txHash: payment.status === "confirmed" ? payment.txHash : null,
+      explorerUrl: payment.status === "confirmed" ? payment.explorerUrl : null,
+      confirmedAt: payment.confirmedAt,
+    };
+  };
   const evidenceById = new Map(evidence.map((record) => [record.id, record]));
 
   const passport: PublicPassport = {
@@ -99,7 +123,7 @@ export async function getPassport(services: Services, rawAddress: string, viewer
       .filter((stamp): stamp is PublicStamp => stamp !== null),
     contributions: evidence
       .filter((record) => isOwner || record.status === "verified")
-      .map((record) => toPublicEvidence(record, earned.get(record.id) ?? 0)),
+      .map((record) => ({ ...toPublicEvidence(record, earned.get(record.id) ?? 0), payment: paymentFor(record) })),
     source: "database",
   };
   return passport;

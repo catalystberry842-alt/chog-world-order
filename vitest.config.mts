@@ -12,5 +12,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["tests/**/*.test.ts"],
+    // The PostgreSQL integration suites share one disposable database and truncate it, so they must not overlap.
+    fileParallelism: !process.env.TEST_DATABASE_URL,
   },
 });

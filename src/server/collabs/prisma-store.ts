@@ -134,6 +134,11 @@ export class PrismaCollabStore implements CollabStore {
     return row ? (await this.withCounts([row]))[0] : null;
   }
 
+  async findCampaignByChainId(chainCampaignId: string) {
+    const row = await this.db.campaign.findUnique({ where: { chainCampaignId: chainCampaignId.toLowerCase() } });
+    return row ? (await this.withCounts([row]))[0] : null;
+  }
+
   async updateCampaignIfStatus(id: string, expected: CampaignLifecycle, update: CampaignUpdate) {
     const { status, registrationStatus, ...rest } = update;
     const result = await this.db.campaign.updateMany({

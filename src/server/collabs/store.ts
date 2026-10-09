@@ -120,6 +120,7 @@ export class DuplicateDeliverableError extends Error {
 export interface CollabStore {
   createCampaign(ownerId: string, content: CampaignContent): Promise<CampaignRecord>;
   findCampaign(id: string): Promise<CampaignWithCounts | null>;
+  findCampaignByChainId(chainCampaignId: string): Promise<CampaignWithCounts | null>;
   /** Updates only if the campaign is still in `expected` status. Null when it changed first. */
   updateCampaignIfStatus(id: string, expected: CampaignLifecycle, update: CampaignUpdate): Promise<CampaignRecord | null>;
   listCampaigns(query: {

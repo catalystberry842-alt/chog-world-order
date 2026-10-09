@@ -6,6 +6,7 @@ import { useState } from "react";
 import { CampaignForm } from "@/components/campaigns/campaign-form";
 import { CampaignStatusBadge, RegistrationBadge } from "@/components/campaigns/campaign-status-badge";
 import { DeliverableHistory } from "@/components/campaigns/deliverable-history";
+import { PaymentPanel, RegistrationPanel } from "@/components/campaigns/onchain-actions";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState, ErrorState } from "@/components/ui/state-panels";
 import { ConnectButton } from "@/components/wallet/connect-button";
@@ -15,10 +16,14 @@ import { ApiError } from "@/lib/client/passport-api";
 import { collabsApi, type CampaignFormInput, type DashboardEntry } from "@/lib/client/collabs-api";
 import { formatTokenUnits } from "@/lib/collabs/rules";
 import { paymentTokens } from "@/lib/collabs/tokens";
+import { paymentsContractConfig } from "@/lib/contracts/campaign-payments";
 import type { ApplicationView, DeliverableView } from "@/lib/collabs/types";
 import { formatDate, shortAddress } from "@/lib/format";
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : "Something went wrong.");
+
+/** On-chain registration and payments are on when the contract address is configured. */
+const onchain = paymentsContractConfig().enabled;
 
 /** Project owner's dashboard: drafts, publication, applications, and deliverable reviews. */
 export function OwnerDashboard({ children }: { children?: React.ReactNode }) {
@@ -118,15 +123,26 @@ function Dashboard({ address }: { address: string }) {
         <EmptyState title="No campaigns yet" description="Create a draft, add deliverables and acceptance criteria, then publish it." />
       ) : (
         entries.map((entry) => (
-          <CampaignManager key={entry.campaign.id} entry={entry} onEdit={() => setEditing(entry.campaign.id)} onChanged={refresh} />
+          <CampaignManager key={entry.campaign.id} entry={entry} ownerAddress={address} onEdit={() => setEditing(entry.campaign.id)} onChanged={refresh} />
         ))
       )}
     </div>
   );
 }
 
-function CampaignManager({ entry, onEdit, onChanged }: { entry: DashboardEntry; onEdit: () => void; onChanged: () => void }) {
-  const { campaign, applications, deliverables } = entry;
+function CampaignManager({
+  entry,
+  ownerAddress,
+  onEdit,
+  onChanged,
+}: {
+  entry: DashboardEntry;
+  ownerAddress: string;
+  onEdit: () => void;
+  onChanged: () => void;
+}) {
+  const { campaign, applications, deliverables, payments } = entry;
+  const registering = campaign.registration.status === "pending";
   const publish = useMutation({ mutationFn: () => collabsApi.publish(campaign.id), onSuccess: onChanged });
   const token = paymentTokens[campaign.paymentToken];
 
@@ -136,7 +152,9 @@ function CampaignManager({ entry, onEdit, onChanged }: { entry: DashboardEntry; 
         <div className="flex min-w-0 flex-col gap-2">
           <div className="flex flex-wrap gap-2">
             <CampaignStatusBadge status={campaign.status} />
-            {campaign.status !== "draft" && <RegistrationBadge status={campaign.registration.status} />}
+            {(campaign.status !== "draft" || campaign.registration.status !== "not-registered") && (
+              <RegistrationBadge status={campaign.registration.status} />
+            )}
           </div>
           <h2 className="text-xl font-semibold">{campaign.title}</h2>
           <p className="text-sm text-white/55">
@@ -145,15 +163,15 @@ function CampaignManager({ entry, onEdit, onChanged }: { entry: DashboardEntry; 
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {campaign.status === "draft" && (
-            <>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={onEdit}>
-                Edit
-              </button>
-              <button type="button" className="btn btn-primary btn-sm" disabled={publish.isPending} onClick={() => publish.mutate()}>
-                {publish.isPending ? "Publishing…" : "Publish"}
-              </button>
-            </>
+          {campaign.status === "draft" && !registering && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={onEdit}>
+              Edit
+            </button>
+          )}
+          {campaign.status === "draft" && !onchain && (
+            <button type="button" className="btn btn-primary btn-sm" disabled={publish.isPending} onClick={() => publish.mutate()}>
+              {publish.isPending ? "Publishing…" : "Publish"}
+            </button>
           )}
           {campaign.status !== "draft" && (
             <Link href={`/collabs/${campaign.id}`} className="btn btn-ghost btn-sm">
@@ -167,6 +185,8 @@ function CampaignManager({ entry, onEdit, onChanged }: { entry: DashboardEntry; 
           {errorText(publish.error)}
         </p>
       )}
+
+      {campaign.status === "draft" && onchain && <RegistrationPanel campaign={campaign} ownerAddress={ownerAddress} onChanged={onChanged} />}
 
       {campaign.status !== "draft" && (
         <>
@@ -193,6 +213,22 @@ function CampaignManager({ entry, onEdit, onChanged }: { entry: DashboardEntry; 
               </>
             )}
           </section>
+          {onchain && deliverables.some((item) => item.status === "accepted") && (
+            <section className="flex flex-col gap-3" aria-label="Payments">
+              <h3 className="font-medium">Payments</h3>
+              {deliverables
+                .filter((item) => item.status === "accepted")
+                .map((item) => (
+                  <PaymentPanel
+                    key={item.id}
+                    deliverableId={item.id}
+                    ownerAddress={ownerAddress}
+                    payment={payments.find((payment) => payment.deliverableId === item.id) ?? null}
+                    onChanged={onChanged}
+                  />
+                ))}
+            </section>
+          )}
         </>
       )}
     </article>

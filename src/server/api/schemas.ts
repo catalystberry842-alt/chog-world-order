@@ -129,3 +129,11 @@ export const campaignListQuerySchema = z.object({
   sort: z.enum(["newest", "budget", "deadline"]).default("newest"),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
 });
+
+// Payments ---------------------------------------------------------------------
+
+const txHash = z.string().trim().regex(/^0x[0-9a-fA-F]{64}$/, "Use a transaction hash: 0x followed by 64 hex characters.");
+
+/** Body only carries a hash hint. Amounts, recipients, and statuses are never accepted. */
+export const txHashSchema = z.object({ txHash }).strict();
+export const registrationHintSchema = z.object({ txHash: txHash.optional() }).strict();

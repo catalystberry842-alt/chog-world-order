@@ -71,6 +71,18 @@ export type PublicEvidence = {
   points: number;
   /** Public verification details (block number, app, reviewer decision time...). */
   verificationData: Record<string, string | number> | null;
+  /**
+   * For accepted campaign work: the on-chain payment, when one exists.
+   * Payment is separate from acceptance and never changes reputation.
+   */
+  payment?: {
+    status: "awaiting-transaction" | "pending-confirmation" | "confirmed" | "failed" | "mismatch";
+    amount: string;
+    tokenSymbol: string;
+    txHash: string | null;
+    explorerUrl: string | null;
+    confirmedAt: string | null;
+  } | null;
   source: DataSource;
 };
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { DeliverableHistory } from "@/components/campaigns/deliverable-history";
+import { PaymentSummary } from "@/components/campaigns/onchain-actions";
 import { ConnectButton } from "@/components/wallet/connect-button";
 import { usePassportSession } from "@/components/wallet/use-passport-session";
 import { useWallet } from "@/components/wallet/use-wallet";
@@ -139,7 +140,7 @@ function Participation({ campaign, address }: { campaign: CampaignView; address:
     );
   }
 
-  const { application, deliverables } = participation.data;
+  const { application, deliverables, payments } = participation.data;
   if (!application) {
     if (new Date(campaign.deadline) <= new Date()) {
       return (
@@ -181,6 +182,16 @@ function Participation({ campaign, address }: { campaign: CampaignView; address:
             <p className="text-sm text-crayon-yellow">Your latest submission is waiting for review.</p>
           ) : (
             <DeliverableForm applicationId={application.id} onSubmitted={refresh} />
+          )}
+          {accepted && (
+            <div className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium">Payment</h3>
+              {payments.length > 0 ? (
+                payments.map((payment) => <PaymentSummary key={payment.id} payment={payment} />)
+              ) : (
+                <p className="text-sm text-white/55">The project has not started a payment yet.</p>
+              )}
+            </div>
           )}
           <DeliverableHistory deliverables={deliverables} />
         </>

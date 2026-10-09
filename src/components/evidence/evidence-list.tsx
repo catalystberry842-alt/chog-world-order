@@ -75,6 +75,33 @@ export function EvidenceList({
               <dd className="text-white/70">
                 {item.source === "mock" ? "Sample data (not verified)" : verificationMethodLabels[item.method]}
               </dd>
+              {item.payment && (
+                <>
+                  <dt>Payment</dt>
+                  <dd className="text-white/70">
+                    {item.payment.status === "confirmed" ? (
+                      <>
+                        <span className="text-crayon-mint">Paid {item.payment.amount}</span>
+                        {item.payment.explorerUrl && (
+                          <>
+                            {" · "}
+                            <a
+                              href={item.payment.explorerUrl}
+                              target="_blank"
+                              rel="noopener noreferrer nofollow"
+                              className="text-monad-300 hover:text-monad-200"
+                            >
+                              view transaction<span className="sr-only"> (opens in a new tab)</span>
+                            </a>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-crayon-yellow">Payment {item.payment.status.replace(/-/g, " ")}</span>
+                    )}
+                  </dd>
+                </>
+              )}
               <dt>Submitted</dt>
               <dd className="text-white/70">
                 <time dateTime={item.submittedAt}>{formatDate(item.submittedAt)}</time>

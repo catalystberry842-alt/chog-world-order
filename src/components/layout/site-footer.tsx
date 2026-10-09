@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { paymentsContractConfig } from "@/lib/contracts/campaign-payments";
 import { nav, site } from "@/lib/site";
 
 export function SiteFooter() {
@@ -10,7 +11,10 @@ export function SiteFooter() {
           <p className="text-sm leading-relaxed text-white/55">{site.description}</p>
           <p className="text-xs leading-relaxed text-white/40">
             Anything marked “Sample” is mock data for illustration. Real passports and scores come only from
-            verified evidence. No smart contracts are deployed and no payments are processed yet.
+            verified evidence.{" "}
+            {paymentsContractConfig().enabled
+              ? "Creators are paid directly from project wallets; Chog World Order never holds funds."
+              : "On-chain payments are not enabled on this deployment."}
           </p>
         </div>
         <nav aria-label="Footer" className="flex flex-col gap-2 text-sm md:items-end">
