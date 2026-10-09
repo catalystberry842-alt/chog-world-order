@@ -59,3 +59,73 @@ export const leaderboardQuerySchema = z.object({
   category: z.enum(reputationCategories).optional(),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
 });
+
+// Collab Board -------------------------------------------------------------------
+
+const campaignCategories = ["art", "content", "development", "community", "research", "video"] as const;
+const list = (max: number, itemMax = 200) => z.array(text(3, itemMax)).max(max);
+
+/**
+ * Campaign content. Strict: owner, status, registration, and payment fields
+ * can never be set by the client.
+ */
+export const campaignInputSchema = z
+  .object({
+    projectName: text(2, 80),
+    title: text(6, 120),
+    summary: text(20, 280),
+    description: text(40, 5000),
+    category: z.enum(campaignCategories),
+    objectives: list(12),
+    deliverables: list(12),
+    eligibility: list(12),
+    acceptanceCriteria: list(12),
+    requiredSkills: z.array(text(1, 40)).max(12),
+    paymentToken: text(2, 10),
+    amountPerCreator: text(1, 40),
+    slots: z.number().int().min(1).max(500),
+    deadline: z.iso.datetime({ offset: true }),
+  })
+  .strict();
+
+export const applicationSchema = z
+  .object({
+    proposal: text(60, 3000),
+    evidenceIds: z.array(text(1, 64)).max(5).default([]),
+  })
+  .strict();
+
+export const decisionSchema = z
+  .object({
+    decision: z.enum(["accept", "reject"]),
+    reason: text(3, 500),
+  })
+  .strict();
+
+export const deliverableSchema = z
+  .object({
+    contentUrl: z
+      .string()
+      .trim()
+      .max(500)
+      .refine((value) => {
+        try {
+          return new URL(value).protocol === "https:";
+        } catch {
+          return false;
+        }
+      }, "Use a full https:// link."),
+    contentHash: z
+      .string()
+      .trim()
+      .regex(/^0x[0-9a-fA-F]{64}$/, "Use a 0x-prefixed SHA-256 hash (64 hex characters)."),
+    notes: text(1, 1000).optional(),
+  })
+  .strict();
+
+export const campaignListQuerySchema = z.object({
+  q: z.string().trim().max(100).default(""),
+  category: z.enum(campaignCategories).optional(),
+  sort: z.enum(["newest", "budget", "deadline"]).default("newest"),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+});

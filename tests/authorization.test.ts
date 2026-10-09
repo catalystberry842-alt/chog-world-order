@@ -85,8 +85,8 @@ describe("unauthorized stamp issuance", () => {
     expect(services.memory.stamps).toHaveLength(0);
   });
 
-  it("refuses reviewer approval for campaign deliverables (verified by the Collab Board only)", async () => {
-    const { services, alice, reviewer } = await setup();
+  it("refuses manual campaign-deliverable claims (recorded only by Collab Board acceptance)", async () => {
+    const { services, alice } = await setup();
     const submitted = await postEvidence(
       post(
         "/api/evidence",
@@ -95,15 +95,9 @@ describe("unauthorized stamp issuance", () => {
       ),
       services,
     );
-    const body = await readJson(submitted);
-    expect(body.evidence!.status).toBe("unavailable");
-    const response = await postEvidenceReview(
-      post(`/api/evidence/${body.evidence!.id}/review`, { decision: "approve" }, { cookie: reviewer.cookie }),
-      services,
-      body.evidence!.id,
-    );
-    expect(response.status).toBe(409);
-    expect(services.memory.stamps).toHaveLength(0);
+    expect(submitted.status).toBe(400);
+    expect((await readJson(submitted)).error?.code).toBe("not_claimable");
+    expect(services.memory.evidence.filter((record) => record.kind === "campaign-deliverable")).toHaveLength(0);
   });
 
   it("rejects cross-site writes even with a valid reviewer session", async () => {

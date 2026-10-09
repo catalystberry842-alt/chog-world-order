@@ -3,6 +3,8 @@ import { createPublicClient, http, verifyMessage, type Address, type Hex } from 
 import { monad } from "viem/chains";
 import { readConfig, type ServerConfig } from "@/server/config";
 import { getPrisma } from "@/server/db";
+import type { CollabStore } from "@/server/collabs/store";
+import { PrismaCollabStore } from "@/server/collabs/prisma-store";
 import { PrismaPassportStore } from "@/server/passport/prisma-store";
 import type { PassportStore } from "@/server/passport/store";
 import type { OnchainClient } from "@/server/verification/onchain";
@@ -16,6 +18,8 @@ export type Services = {
   config: ServerConfig;
   /** Null when DATABASE_URL is not configured. */
   store: PassportStore | null;
+  /** Collab Board store. Null when DATABASE_URL is not configured. */
+  collabs: CollabStore | null;
   handlers: HandlerRegistry;
   verifySignature: SignatureVerifier;
   now: () => Date;
@@ -33,6 +37,7 @@ function build(): Services {
   return {
     config,
     store: config.databaseUrl ? new PrismaPassportStore(getPrisma(config.databaseUrl)) : null,
+    collabs: config.databaseUrl ? new PrismaCollabStore(getPrisma(config.databaseUrl)) : null,
     handlers: createHandlerRegistry({ onchainClient: publicClient as OnchainClient | null, apps: supportedApps }),
     // With an RPC endpoint, smart-contract wallets (ERC-1271/6492) verify too.
     // Without one, only plain EOA signatures can be checked.

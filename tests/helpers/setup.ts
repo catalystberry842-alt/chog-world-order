@@ -4,6 +4,7 @@ import { verifyMessage } from "viem";
 import { monad } from "viem/chains";
 import type { PublicEvidence, PublicPassport } from "@/lib/passport/types";
 import type { ServerConfig } from "@/server/config";
+import { MemoryCollabStore } from "@/server/collabs/memory-store";
 import { MemoryPassportStore } from "@/server/passport/memory-store";
 import type { PassportStore } from "@/server/passport/store";
 import type { Services } from "@/server/services";
@@ -23,24 +24,28 @@ export const testConfig: ServerConfig = {
 
 export function makeServices(
   options: { store?: PassportStore | null; onchainClient?: OnchainClient | null; apps?: SupportedApp[]; now?: Date } = {},
-): Services & { memory: MemoryPassportStore } {
+): Services & { memory: MemoryPassportStore; collabMemory: MemoryCollabStore } {
+  // With a fixed start time the clock still ticks 1 ms per read, like a real clock,
+  // so records created in sequence get distinct, ordered timestamps.
+  const now = (() => {
+    if (!options.now) return () => new Date();
+    let tick = 0;
+    const base = options.now.getTime();
+    return () => new Date(base + tick++);
+  })();
   const memory = new MemoryPassportStore();
+  const collabMemory = new MemoryCollabStore(now);
   const store = options.store === undefined ? memory : options.store;
   return {
     memory,
+    collabMemory,
     config: testConfig,
     store,
+    collabs: options.store === null ? null : collabMemory,
     handlers: createHandlerRegistry({ onchainClient: options.onchainClient ?? null, apps: options.apps ?? [] }),
     // Real EOA signature verification (test keys are generated per run, never persisted).
     verifySignature: (input) => verifyMessage(input),
-    // With a fixed start time the clock still ticks 1 ms per read, like a real clock,
-    // so records created in sequence get distinct, ordered timestamps.
-    now: (() => {
-      if (!options.now) return () => new Date();
-      let tick = 0;
-      const base = options.now.getTime();
-      return () => new Date(base + tick++);
-    })(),
+    now,
   };
 }
 

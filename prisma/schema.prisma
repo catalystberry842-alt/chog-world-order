@@ -79,15 +79,20 @@ model User {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  sessions           WalletSession[]
-  evidence           Evidence[]           @relation("EvidenceOwner")
-  reviewedEvidence   Evidence[]           @relation("EvidenceReviewer")
-  stamps             PassportStamp[]      @relation("StampHolder")
-  issuedStamps       PassportStamp[]      @relation("StampIssuer")
-  reputationEvents   ReputationEvent[]    @relation("ReputationHolder")
-  reputationActions  ReputationEvent[]    @relation("ReputationActor")
-  snapshots          ReputationSnapshot[] @relation("SnapshotHolder")
-  triggeredSnapshots ReputationSnapshot[] @relation("SnapshotTrigger")
+  sessions             WalletSession[]
+  evidence             Evidence[]            @relation("EvidenceOwner")
+  reviewedEvidence     Evidence[]            @relation("EvidenceReviewer")
+  stamps               PassportStamp[]       @relation("StampHolder")
+  issuedStamps         PassportStamp[]       @relation("StampIssuer")
+  reputationEvents     ReputationEvent[]     @relation("ReputationHolder")
+  reputationActions    ReputationEvent[]     @relation("ReputationActor")
+  snapshots            ReputationSnapshot[]  @relation("SnapshotHolder")
+  triggeredSnapshots   ReputationSnapshot[]  @relation("SnapshotTrigger")
+  ownedCampaigns       Campaign[]            @relation("CampaignOwner")
+  applications         CampaignApplication[] @relation("Applicant")
+  reviewedApplications CampaignApplication[] @relation("ApplicationReviewer")
+  deliverables         Deliverable[]         @relation("DeliverableCreator")
+  deliverableReviews   DeliverableReview[]
 }
 
 /// A wallet sign-in (SIWE). The cookie holds a random token; only its SHA-256 hash is stored.
@@ -221,4 +226,155 @@ model ReputationSnapshot {
   createdAt          DateTime      @default(now())
 
   @@index([userId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Collab Board
+// ---------------------------------------------------------------------------
+
+enum CampaignCategory {
+  ART
+  CONTENT
+  DEVELOPMENT
+  COMMUNITY
+  RESEARCH
+  VIDEO
+}
+
+enum CampaignStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  COMPLETED
+  CANCELLED
+}
+
+/// On-chain registration in CampaignPayments. A campaign is shown as registered only after the event is verified.
+enum RegistrationStatus {
+  NOT_REGISTERED
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum ApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum DeliverableStatus {
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+}
+
+model Campaign {
+  id                 String             @id @default(cuid())
+  /// The signed-in wallet that created the campaign. Never taken from a request body.
+  ownerId            String
+  owner              User               @relation("CampaignOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  projectName        String
+  title              String
+  summary            String
+  description        String
+  category           CampaignCategory
+  objectives         String[]
+  /// What must be delivered.
+  deliverables       String[]
+  /// Who may apply.
+  eligibility        String[]
+  /// How the owner decides a deliverable is acceptable.
+  acceptanceCriteria String[]
+  requiredSkills     String[]
+  /// Key of a supported payment token (see src/lib/collabs/tokens.ts).
+  paymentToken       String
+  /// Amount paid to each accepted creator, in the token's base units.
+  amountPerCreator   Decimal            @db.Decimal(78, 0)
+  slots              Int
+  deadline           DateTime
+  status             CampaignStatus     @default(DRAFT)
+  publishedAt        DateTime?
+  /// bytes32 id used by CampaignPayments.registerCampaign. Unique so a campaign registers once.
+  chainCampaignId    String?            @unique
+  registrationStatus RegistrationStatus @default(NOT_REGISTERED)
+  registrationTxHash String?
+  registrationError  String?
+  registeredAt       DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  applications CampaignApplication[]
+  submissions  Deliverable[]
+
+  @@index([status, deadline])
+  @@index([category, status])
+  @@index([ownerId])
+}
+
+model CampaignApplication {
+  id             String            @id @default(cuid())
+  campaignId     String
+  campaign       Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  applicantId    String
+  applicant      User              @relation("Applicant", fields: [applicantId], references: [id], onDelete: Cascade)
+  proposal       String
+  /// Ids of the applicant's own verified Passport evidence, checked on the server.
+  evidenceIds    String[]
+  status         ApplicationStatus @default(PENDING)
+  decisionReason String?
+  reviewedById   String?
+  reviewedBy     User?             @relation("ApplicationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  deliverables Deliverable[]
+
+  /// One application per creator per campaign.
+  @@unique([campaignId, applicantId])
+  @@index([campaignId, status])
+  @@index([applicantId])
+}
+
+model Deliverable {
+  id            String              @id @default(cuid())
+  campaignId    String
+  campaign      Campaign            @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  applicationId String
+  application   CampaignApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  creatorId     String
+  creator       User                @relation("DeliverableCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  /// https link to the submitted work.
+  contentUrl    String
+  /// 0x-prefixed SHA-256 of the submitted content, so the reviewed content can be identified later.
+  contentHash   String
+  notes         String?
+  /// 1 for the first submission, 2 after a rejection and resubmission, ...
+  revision      Int
+  status        DeliverableStatus   @default(SUBMITTED)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  reviews DeliverableReview[]
+
+  /// The same content cannot be submitted twice for one application.
+  @@unique([applicationId, contentHash])
+  @@unique([applicationId, revision])
+  @@index([campaignId, status])
+}
+
+/// Append-only review history for deliverables.
+model DeliverableReview {
+  id            String            @id @default(cuid())
+  deliverableId String
+  deliverable   Deliverable       @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+  reviewerId    String
+  reviewer      User              @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+  decision      DeliverableStatus
+  reason        String
+  createdAt     DateTime          @default(now())
+
+  @@index([deliverableId, createdAt])
 }

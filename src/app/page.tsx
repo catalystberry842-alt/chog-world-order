@@ -1,10 +1,15 @@
 import Link from "next/link";
+import { connection } from "next/server";
+import { Suspense } from "react";
 import { CampaignCard } from "@/components/campaigns/campaign-card";
 import { PassportStamp } from "@/components/passport/passport-stamp";
 import { ChogIllustration } from "@/components/ui/chog-illustration";
 import { PageContainer, SectionHeading } from "@/components/ui/page-header";
 import { SampleDataBadge } from "@/components/ui/sample-data-badge";
-import { getCampaigns } from "@/lib/data";
+import { CardGridSkeleton } from "@/components/ui/skeletons";
+import { listSampleCampaigns } from "@/lib/collabs/samples";
+import { listCampaigns } from "@/server/collabs/service";
+import { getServices } from "@/server/services";
 import { orderedStamps } from "@/lib/passport/stamps";
 
 const pillars = [
@@ -38,8 +43,6 @@ const journey = [
 ];
 
 export default async function HomePage() {
-  const campaigns = await getCampaigns();
-  const featured = campaigns.filter((campaign) => campaign.status === "open").slice(0, 3);
   const heroStamps = orderedStamps.slice(0, 4);
 
   return (
@@ -148,21 +151,14 @@ export default async function HomePage() {
           title="Open collabs"
           description="Paid campaigns from projects building on Monad."
           action={
-            <div className="flex items-center gap-3">
-              <SampleDataBadge />
-              <Link href="/collabs" className="text-sm font-medium text-monad-300 hover:text-monad-200">
-                View all →
-              </Link>
-            </div>
+            <Link href="/collabs" className="text-sm font-medium text-monad-300 hover:text-monad-200">
+              View all →
+            </Link>
           }
         />
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {featured.map((campaign) => (
-            <li key={campaign.id}>
-              <CampaignCard campaign={campaign} />
-            </li>
-          ))}
-        </ul>
+        <Suspense fallback={<CardGridSkeleton count={3} />}>
+          <FeaturedCampaigns />
+        </Suspense>
       </section>
 
       {/* Principles */}
@@ -188,5 +184,41 @@ export default async function HomePage() {
         </ul>
       </section>
     </PageContainer>
+  );
+}
+
+/** Newest published campaigns from the database, or labelled samples when none is configured. */
+async function FeaturedCampaigns() {
+  const services = getServices();
+  const query = { q: "", category: null, sort: "newest" as const, page: 1 };
+  let page;
+  if (services.collabs) {
+    await connection();
+    page = await listCampaigns(services, query);
+  } else {
+    page = listSampleCampaigns(query);
+  }
+  const featured = page.campaigns.filter((campaign) => campaign.status === "published").slice(0, 3);
+  if (featured.length === 0) {
+    return (
+      <p className="glass rounded-3xl px-6 py-8 text-center text-sm text-white/60">
+        No open campaigns yet.{" "}
+        <Link href="/collabs/dashboard" className="font-medium text-monad-300 hover:text-monad-200">
+          Post the first one →
+        </Link>
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {page.source === "mock" && <SampleDataBadge label="Sample campaigns" />}
+      <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {featured.map((campaign) => (
+          <li key={campaign.id}>
+            <CampaignCard campaign={campaign} />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

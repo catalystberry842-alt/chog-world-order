@@ -1,28 +1,13 @@
 /**
  * Read helpers for pages.
  *
- * Campaigns are MOCK DATA (the Collab Board backend is a later phase).
- * Sample passports are MOCK DATA too and are always labelled as samples.
+ * Sample passports are MOCK DATA and always labelled as samples.
+ * Campaign samples live in `src/lib/collabs/samples.ts`.
  * Real passports are read on the server through `src/server/passport`.
  */
-import { mockCampaigns } from "@/lib/mock/campaigns";
 import { getMockPassport, mockPassportAddresses } from "@/lib/mock/passports";
 import type { PublicPassport } from "@/lib/passport/types";
-import type { Address, Campaign } from "@/lib/types";
-
-// Campaigns -----------------------------------------------------------------
-
-export async function getCampaigns(): Promise<Campaign[]> {
-  return mockCampaigns;
-}
-
-export async function getCampaign(id: string): Promise<Campaign | undefined> {
-  return mockCampaigns.find((campaign) => campaign.id === id);
-}
-
-export async function getCampaignIds(): Promise<string[]> {
-  return mockCampaigns.map((campaign) => campaign.id);
-}
+import type { Address } from "@/lib/types";
 
 // Sample passports (mock) ---------------------------------------------------
 

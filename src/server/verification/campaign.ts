@@ -2,26 +2,25 @@ import { badRequest } from "@/server/errors";
 import type { VerificationHandler } from "@/server/verification/types";
 
 /**
- * Accepted campaign deliverables. Acceptance must come from the Collab Board,
- * where the project that posted the campaign accepts the work. That system
- * is not built yet, so every claim is stored as "unavailable" and reviewers
- * cannot approve it on the project's behalf.
+ * Accepted campaign deliverables. These are never claimed by hand: the Collab
+ * Board records verified campaign evidence automatically when the project
+ * that posted the campaign accepts a deliverable. Manual claims are refused,
+ * and reviewers cannot approve campaign work on a project's behalf.
  */
 export const campaignDeliverableHandler: VerificationHandler = {
   kinds: ["campaign-deliverable"],
   method: "campaign-acceptance",
   reviewerApproves: false,
-  prepare(claim) {
-    const id = claim.reference.trim().toLowerCase();
-    if (!/^[a-z0-9][a-z0-9-]{2,80}$/.test(id)) {
-      throw badRequest("Use the deliverable id shown on the campaign, e.g. meetup-recap-reel.", "invalid_reference");
-    }
-    return { reference: id, dedupeKey: `campaign:${id}`, chainId: null, txHash: null, appId: null };
+  prepare() {
+    throw badRequest(
+      "Campaign work is recorded automatically when the project accepts your deliverable on the Collab Board.",
+      "not_claimable",
+    );
   },
   async verifyOnSubmit() {
     return {
       status: "unavailable",
-      reason: "Campaign acceptance is verified by the Collab Board, which is not available yet.",
+      reason: "Campaign work is recorded automatically when the project accepts it.",
     };
   },
 };
