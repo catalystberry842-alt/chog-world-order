@@ -1,0 +1,176 @@
+// Chog World Order — Passport data model.
+//
+// Design rules enforced by the schema:
+// - One account per wallet address (User.address is unique, stored lowercase).
+// - Session tokens are never stored in plain text (WalletSession.tokenHash).
+// - The same piece of evidence can only be claimed once, by anyone
+//   (Evidence.dedupeKey is unique), so duplicates can never produce extra stamps.
+// - A user holds at most one stamp per category, and a single evidence record
+//   can back at most one stamp of each category.
+// - Reputation is an append-only ledger. Each evidence record produces at most
+//   one CONTRIBUTION_VERIFIED event (unique evidenceId + kind), and each stamp at
+//   most one STAMP_ISSUED event (unique stampId; stamp events leave evidenceId null).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  CONTRIBUTOR
+  REVIEWER
+  ADMIN
+}
+
+enum EvidenceKind {
+  ONCHAIN_INTERACTION
+  COMMUNITY_CONTRIBUTION
+  CODE_CONTRIBUTION
+  RESEARCH_CONTRIBUTION
+  CAMPAIGN_DELIVERABLE
+}
+
+enum VerificationMethod {
+  ONCHAIN_RECEIPT
+  REVIEWER_APPROVAL
+  MAINTAINER_APPROVAL
+  CAMPAIGN_ACCEPTANCE
+}
+
+enum EvidenceStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  UNAVAILABLE
+}
+
+enum StampCategory {
+  MONAD_EXPLORER
+  COMMUNITY_CONTRIBUTOR
+  BUILDER
+  RESEARCHER
+  COLLABORATOR
+  CONSISTENT_CONTRIBUTOR
+}
+
+enum ReputationEventKind {
+  CONTRIBUTION_VERIFIED
+  STAMP_ISSUED
+  ADJUSTMENT
+}
+
+model User {
+  id          String   @id @default(cuid())
+  /// Lowercase 0x-prefixed wallet address.
+  address     String   @unique
+  displayName String?
+  role        UserRole @default(CONTRIBUTOR)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sessions         WalletSession[]
+  evidence         Evidence[]        @relation("EvidenceOwner")
+  reviewedEvidence Evidence[]        @relation("EvidenceReviewer")
+  stamps           PassportStamp[]   @relation("StampHolder")
+  issuedStamps     PassportStamp[]   @relation("StampIssuer")
+  reputationEvents ReputationEvent[]
+}
+
+/// A wallet sign-in (SIWE). The cookie holds a random token; only its SHA-256 hash is stored.
+model WalletSession {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  /// SIWE nonce used for this sign-in. Unique, so a signed message cannot be replayed.
+  nonce      String    @unique
+  chainId    Int
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Evidence {
+  id                 String             @id @default(cuid())
+  userId             String
+  user               User               @relation("EvidenceOwner", fields: [userId], references: [id], onDelete: Cascade)
+  kind               EvidenceKind
+  verificationMethod VerificationMethod
+  status             EvidenceStatus     @default(PENDING)
+  title              String
+  summary            String
+  /// Public pointer to the evidence: a transaction hash, PR URL, document URL, or deliverable id.
+  reference          String
+  /// Canonical form of the reference. Unique across all users to block duplicate claims.
+  dedupeKey          String             @unique
+  chainId            Int?
+  txHash             String?
+  /// Supported application id (on-chain evidence only).
+  appId              String?
+  /// When the activity happened (block time for on-chain evidence).
+  occurredAt         DateTime
+  /// Short reason shown to the contributor and the public.
+  statusReason       String?
+  /// Reviewer-only note. Never returned by public APIs.
+  reviewerNote       String?
+  reviewerId         String?
+  reviewer           User?              @relation("EvidenceReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  reviewedAt         DateTime?
+  verifiedAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  stamps           PassportStamp[]
+  reputationEvents ReputationEvent[]
+
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@index([kind, status])
+}
+
+model PassportStamp {
+  id         String        @id @default(cuid())
+  userId     String
+  user       User          @relation("StampHolder", fields: [userId], references: [id], onDelete: Cascade)
+  category   StampCategory
+  /// The verified evidence that earned this stamp.
+  evidenceId String
+  evidence   Evidence      @relation(fields: [evidenceId], references: [id], onDelete: Restrict)
+  issuedAt   DateTime      @default(now())
+  /// Reviewer or admin who triggered issuance. Null when issued automatically after on-chain verification.
+  issuedById String?
+  issuedBy   User?         @relation("StampIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+
+  reputationEvents ReputationEvent[]
+
+  @@unique([userId, category])
+  @@unique([evidenceId, category])
+  @@index([userId, issuedAt])
+}
+
+model ReputationEvent {
+  id         String              @id @default(cuid())
+  userId     String
+  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind       ReputationEventKind
+  points     Int
+  /// Score bucket, e.g. "code" or "stamps". Matches the public reputation breakdown.
+  source     String
+  reason     String
+  evidenceId String?
+  evidence   Evidence?           @relation(fields: [evidenceId], references: [id], onDelete: Restrict)
+  stampId    String?             @unique
+  stamp      PassportStamp?      @relation(fields: [stampId], references: [id], onDelete: Restrict)
+  createdAt  DateTime            @default(now())
+
+  @@unique([evidenceId, kind])
+  @@index([userId, createdAt])
+}

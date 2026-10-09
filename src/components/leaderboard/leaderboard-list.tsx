@@ -2,26 +2,27 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ScoreBar, scoreSegments, segmentColor } from "@/components/passport/reputation-preview";
+import { ReputationBar, reputationColor } from "@/components/reputation/reputation-breakdown";
 import { Avatar } from "@/components/ui/avatar";
 import { formatNumber, shortAddress } from "@/lib/format";
-import type { RankedContributor } from "@/lib/types";
+import { reputationSourceLabels } from "@/lib/passport/reputation";
+import { reputationSources, type LeaderboardEntry, type ReputationSource } from "@/lib/passport/types";
 
-type SortKey = "total" | (typeof scoreSegments)[number]["key"];
+type SortKey = "total" | ReputationSource;
 
 const sortOptions: { key: SortKey; label: string }[] = [
   { key: "total", label: "Overall" },
-  ...scoreSegments.map((segment) => ({ key: segment.key, label: segment.label })),
+  ...reputationSources.map((source) => ({ key: source, label: reputationSourceLabels[source] })),
 ];
 
 /** Ranked contributors with a stacked score bar and an expandable breakdown. */
-export function LeaderboardList({ contributors }: { contributors: RankedContributor[] }) {
+export function LeaderboardList({ contributors }: { contributors: LeaderboardEntry[] }) {
   const [sortKey, setSortKey] = useState<SortKey>("total");
 
   const sorted = useMemo(
     () =>
       [...contributors].sort(
-        (a, b) => b.score[sortKey] - a.score[sortKey] || b.score.total - a.score.total,
+        (a, b) => b.reputation[sortKey] - a.reputation[sortKey] || b.reputation.total - a.reputation.total,
       ),
     [contributors, sortKey],
   );
@@ -42,7 +43,7 @@ export function LeaderboardList({ contributors }: { contributors: RankedContribu
             }`}
           >
             {option.key !== "total" && (
-              <span aria-hidden="true" className={`h-2 w-2 rounded-full ${segmentColor[option.key]}`} />
+              <span aria-hidden="true" className={`h-2 w-2 rounded-full ${reputationColor[option.key]}`} />
             )}
             {option.label}
           </button>
@@ -52,7 +53,8 @@ export function LeaderboardList({ contributors }: { contributors: RankedContribu
       <ol className="flex flex-col gap-3">
         {sorted.map((contributor, index) => {
           const position = index + 1;
-          const value = contributor.score[sortKey];
+          const value = contributor.reputation[sortKey];
+          const name = contributor.profile.displayName ?? shortAddress(contributor.address);
           return (
             <li key={contributor.address}>
               <details className="glass group rounded-3xl open:border-monad-400/30">
@@ -68,13 +70,13 @@ export function LeaderboardList({ contributors }: { contributors: RankedContribu
                   >
                     {position}
                   </span>
-                  <Avatar name={contributor.displayName} hue={contributor.avatarHue} size="sm" className="hidden sm:inline-flex" />
+                  <Avatar name={name} hue={contributor.profile.avatarHue} size="sm" className="hidden sm:inline-flex" />
                   <span className="flex min-w-0 flex-1 flex-col gap-2">
                     <span className="flex flex-wrap items-baseline gap-x-2">
-                      <span className="truncate font-medium">{contributor.displayName}</span>
+                      <span className="truncate font-medium">{name}</span>
                       <span className="font-mono text-xs text-white/45">{shortAddress(contributor.address)}</span>
                     </span>
-                    <ScoreBar score={contributor.score} className="max-w-md" />
+                    <ReputationBar reputation={contributor.reputation} className="max-w-md" />
                   </span>
                   <span className="text-right">
                     <span className="block font-display text-xl font-semibold tabular-nums">{formatNumber(value)}</span>
@@ -96,7 +98,7 @@ export function LeaderboardList({ contributors }: { contributors: RankedContribu
 
                 <div className="grid gap-5 border-t border-white/[0.06] p-4 sm:p-5 md:grid-cols-[1fr_auto]">
                   <table className="w-full text-sm">
-                    <caption className="sr-only">Score breakdown for {contributor.displayName}</caption>
+                    <caption className="sr-only">Score breakdown for {name}</caption>
                     <thead>
                       <tr className="text-left text-xs text-white/45">
                         <th scope="col" className="pb-2 font-medium">
@@ -111,20 +113,20 @@ export function LeaderboardList({ contributors }: { contributors: RankedContribu
                       </tr>
                     </thead>
                     <tbody>
-                      {scoreSegments.map((segment) => (
-                        <tr key={segment.key} className="border-t border-white/[0.04]">
+                      {reputationSources.map((source) => (
+                        <tr key={source} className="border-t border-white/[0.04]">
                           <th scope="row" className="py-1.5 text-left font-normal text-white/70">
                             <span className="flex items-center gap-2">
-                              <span aria-hidden="true" className={`h-2 w-2 rounded-full ${segmentColor[segment.key]}`} />
-                              {segment.label}
+                              <span aria-hidden="true" className={`h-2 w-2 rounded-full ${reputationColor[source]}`} />
+                              {reputationSourceLabels[source]}
                             </span>
                           </th>
                           <td className="py-1.5 text-right font-mono tabular-nums">
-                            {formatNumber(contributor.score[segment.key])}
+                            {formatNumber(contributor.reputation[source])}
                           </td>
                           <td className="py-1.5 text-right font-mono text-white/50 tabular-nums">
-                            {contributor.score.total
-                              ? Math.round((contributor.score[segment.key] / contributor.score.total) * 100)
+                            {contributor.reputation.total
+                              ? Math.round((contributor.reputation[source] / contributor.reputation.total) * 100)
                               : 0}
                             %
                           </td>
@@ -135,7 +137,7 @@ export function LeaderboardList({ contributors }: { contributors: RankedContribu
                           Total
                         </th>
                         <td className="py-2 text-right font-mono tabular-nums">
-                          {formatNumber(contributor.score.total)}
+                          {formatNumber(contributor.reputation.total)}
                         </td>
                         <td />
                       </tr>
@@ -143,8 +145,7 @@ export function LeaderboardList({ contributors }: { contributors: RankedContribu
                   </table>
                   <div className="flex flex-col gap-3 text-sm text-white/60 md:w-56">
                     <p>
-                      {contributor.contributionCount} contributions · {contributor.stampCount} stamps ·{" "}
-                      {contributor.collabsCompleted} collabs completed
+                      {contributor.verifiedContributionCount} verified contributions · {contributor.stampCount} stamps
                     </p>
                     <Link href={`/profile/${contributor.address}`} className="btn btn-ghost btn-sm w-full">
                       View profile

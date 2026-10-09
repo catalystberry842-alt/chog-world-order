@@ -1,0 +1,295 @@
+import { normalizeAddress } from "@/lib/passport/address";
+import { breakdownFromEvents, pointsForEvidence, pointsForStamp } from "@/lib/passport/reputation";
+import { planIssuance } from "@/lib/passport/rules";
+import type { EvidenceReference, PublicEvidence, PublicPassport, PublicStamp } from "@/lib/passport/types";
+import { badRequest, conflict, DuplicateEvidenceError, forbidden, notFound } from "@/server/errors";
+import { requireRole, requireStore, type AuthContext } from "@/server/auth/session";
+import type { EvidenceRecord, PassportStore, StampRecord, UserRecord } from "@/server/passport/store";
+import type { Services } from "@/server/services";
+import type { EvidenceClaim } from "@/server/verification/types";
+
+const EXPLORER_TX_URL = "https://monadscan.com/tx/";
+
+const earnedPoints = (record: EvidenceRecord) => (record.status === "verified" ? pointsForEvidence[record.kind] : 0);
+
+// ---------------------------------------------------------------------------
+// Public read model. Nothing here exposes reviewer notes, dedupe keys,
+// reviewer ids, or session data.
+// ---------------------------------------------------------------------------
+
+export function evidenceReference(record: Pick<EvidenceRecord, "kind" | "reference" | "txHash" | "chainId">): EvidenceReference {
+  if (record.kind === "onchain-interaction" && record.txHash) {
+    return {
+      label: `Transaction ${record.txHash.slice(0, 10)}…${record.txHash.slice(-6)}`,
+      url: `${EXPLORER_TX_URL}${record.txHash}`,
+      txHash: record.txHash,
+      chainId: record.chainId,
+    };
+  }
+  if (record.kind === "campaign-deliverable") {
+    return { label: `Deliverable · ${record.reference}`, url: null, txHash: null, chainId: null };
+  }
+  // Off-chain references were canonicalised to https URLs at submission.
+  const url = record.reference.startsWith("https://") ? record.reference : null;
+  const label = url ? url.replace(/^https:\/\//, "").slice(0, 80) : record.reference.slice(0, 80);
+  return { label, url, txHash: null, chainId: null };
+}
+
+function toPublicEvidence(record: EvidenceRecord, points: number): PublicEvidence {
+  return {
+    id: record.id,
+    kind: record.kind,
+    title: record.title,
+    summary: record.summary,
+    reference: evidenceReference(record),
+    status: record.status,
+    method: record.method,
+    statusReason: record.statusReason,
+    occurredAt: record.occurredAt.toISOString(),
+    submittedAt: record.createdAt.toISOString(),
+    verifiedAt: record.verifiedAt?.toISOString() ?? null,
+    points,
+    source: "database",
+  };
+}
+
+function toPublicStamp(stamp: StampRecord, evidence: EvidenceRecord | undefined): PublicStamp | null {
+  if (!evidence) return null;
+  return {
+    id: stamp.id,
+    category: stamp.category,
+    issuedAt: stamp.issuedAt.toISOString(),
+    evidence: { id: evidence.id, kind: evidence.kind, title: evidence.title, reference: evidenceReference(evidence) },
+    source: "database",
+  };
+}
+
+/**
+ * Builds the passport for an address. Returns null when the address has no
+ * account. Connecting a wallet alone creates nothing: an account only exists
+ * after sign-in, and it starts with zero stamps and zero reputation.
+ *
+ * @param viewer the signed-in user, if any. Owners also see pending, rejected,
+ *               and unavailable records; everyone else sees verified records only.
+ */
+export async function getPassport(services: Services, rawAddress: string, viewer: UserRecord | null) {
+  const store = requireStore(services);
+  const address = normalizeAddress(rawAddress);
+  if (!address) throw badRequest("That is not a valid wallet address.", "invalid_address");
+
+  const user = await store.findUserByAddress(address);
+  if (!user) return null;
+
+  const isOwner = viewer?.id === user.id;
+  const [evidence, stamps, events, rank] = await Promise.all([
+    store.listEvidence({ userId: user.id, limit: 500 }),
+    store.listStamps(user.id),
+    store.listReputation(user.id),
+    store.rankOf(user.id),
+  ]);
+
+  const pointsFor = (evidenceId: string) =>
+    events
+      .filter((event) => event.evidenceId === evidenceId && event.kind === "contribution-verified")
+      .reduce((sum, event) => sum + event.points, 0);
+  const evidenceById = new Map(evidence.map((record) => [record.id, record]));
+
+  const passport: PublicPassport = {
+    address,
+    profile: { displayName: user.displayName, handle: null, bio: null, skills: [], avatarHue: parseInt(address.slice(2, 8), 16) % 360 },
+    joinedAt: user.createdAt.toISOString(),
+    rank,
+    reputation: breakdownFromEvents(events),
+    verifiedContributionCount: evidence.filter((record) => record.status === "verified").length,
+    stamps: stamps
+      .map((stamp) => toPublicStamp(stamp, evidenceById.get(stamp.evidenceId)))
+      .filter((stamp): stamp is PublicStamp => stamp !== null),
+    contributions: evidence
+      .filter((record) => isOwner || record.status === "verified")
+      .map((record) => toPublicEvidence(record, pointsFor(record.id))),
+    source: "database",
+  };
+  return passport;
+}
+
+// ---------------------------------------------------------------------------
+// Writes
+// ---------------------------------------------------------------------------
+
+const earliestActivity = new Date("2025-01-01T00:00:00Z");
+
+/**
+ * Stores an evidence claim for the signed-in wallet and runs its handler.
+ * The claimant is always the session's user; the request cannot name another wallet.
+ */
+export async function submitEvidence(services: Services, auth: AuthContext, claim: EvidenceClaim) {
+  const store = requireStore(services);
+  const handler = services.handlers[claim.kind];
+  const prepared = handler.prepare(claim);
+  const now = services.now();
+
+  const occurredAt = claim.occurredAt ?? now;
+  if (occurredAt > now || occurredAt < earliestActivity) {
+    throw badRequest("The activity date must be in the past and after January 2025.", "invalid_date");
+  }
+
+  let record: EvidenceRecord;
+  try {
+    record = await store.createEvidence({
+      userId: auth.user.id,
+      kind: claim.kind,
+      method: handler.method,
+      status: "pending",
+      title: claim.title,
+      summary: claim.summary,
+      reference: prepared.reference,
+      dedupeKey: prepared.dedupeKey,
+      chainId: prepared.chainId,
+      txHash: prepared.txHash,
+      appId: prepared.appId,
+      occurredAt,
+      statusReason: "Received. Verification has not run yet.",
+    });
+  } catch (error) {
+    if (error instanceof DuplicateEvidenceError) throw conflict("duplicate_evidence", error.message);
+    throw error;
+  }
+
+  const outcome = await handler.verifyOnSubmit(prepared, { wallet: auth.user.address });
+  const updated =
+    (await store.updateEvidenceIfStatus(record.id, "pending", {
+      status: outcome.status,
+      statusReason: outcome.reason,
+      occurredAt: outcome.occurredAt ?? record.occurredAt,
+      verifiedAt: outcome.status === "verified" ? now : null,
+    })) ?? record;
+
+  const issued = updated.status === "verified" ? await issueForEvidence(services, updated.id, null) : [];
+  return { evidence: toPublicEvidence(updated, earnedPoints(updated)), issuedStamps: issued.map((stamp) => stamp.category) };
+}
+
+export type ReviewDecision = {
+  decision: "approve" | "reject" | "recheck";
+  publicReason?: string;
+  internalNote?: string;
+};
+
+/**
+ * Reviewer action on an evidence record.
+ * - approve / reject: off-chain kinds only, while the record is pending.
+ * - recheck: on-chain kinds only; re-runs the receipt check against the owner's wallet.
+ */
+export async function reviewEvidence(services: Services, reviewer: UserRecord, evidenceId: string, input: ReviewDecision) {
+  const store = requireStore(services);
+  requireRole(reviewer, ["reviewer", "admin"]);
+
+  const evidence = await store.findEvidence(evidenceId);
+  if (!evidence) throw notFound("Evidence not found.");
+  if (evidence.userId === reviewer.id) throw forbidden("You cannot review your own evidence.");
+
+  const handler = services.handlers[evidence.kind];
+  const now = services.now();
+
+  if (input.decision === "recheck") {
+    if (evidence.method !== "onchain-receipt") {
+      throw conflict("not_recheckable", "Only on-chain evidence can be re-checked automatically.");
+    }
+    if (evidence.status !== "pending" && evidence.status !== "unavailable") {
+      throw conflict("already_final", "This evidence already has a final status.");
+    }
+    const owner = await findOwner(store, evidence.userId);
+    const outcome = await handler.verifyOnSubmit(
+      { reference: evidence.reference, dedupeKey: evidence.dedupeKey, chainId: evidence.chainId, txHash: evidence.txHash, appId: evidence.appId },
+      { wallet: owner.address },
+    );
+    const updated = await store.updateEvidenceIfStatus(evidence.id, evidence.status, {
+      status: outcome.status,
+      statusReason: outcome.reason,
+      occurredAt: outcome.occurredAt ?? evidence.occurredAt,
+      verifiedAt: outcome.status === "verified" ? now : null,
+    });
+    if (!updated) throw conflict("changed", "This evidence changed while you were reviewing it.");
+    const issued = updated.status === "verified" ? await issueForEvidence(services, updated.id, reviewer.id) : [];
+    return { evidence: toPublicEvidence(updated, earnedPoints(updated)), issuedStamps: issued.map((stamp) => stamp.category) };
+  }
+
+  if (!handler.reviewerApproves) {
+    throw conflict(
+      "not_reviewer_verified",
+      evidence.method === "onchain-receipt"
+        ? "On-chain evidence is verified from its transaction receipt, not by reviewers. Use recheck."
+        : "Campaign deliverables are accepted through the Collab Board, not by reviewers.",
+    );
+  }
+  if (evidence.status !== "pending") throw conflict("already_reviewed", "This evidence has already been reviewed.");
+
+  const approve = input.decision === "approve";
+  const updated = await store.updateEvidenceIfStatus(evidence.id, "pending", {
+    status: approve ? "verified" : "rejected",
+    statusReason: input.publicReason?.trim() || (approve ? "Approved by an authorized reviewer." : "Not approved by a reviewer."),
+    reviewerNote: input.internalNote?.trim() || null,
+    reviewerId: reviewer.id,
+    reviewedAt: now,
+    verifiedAt: approve ? now : null,
+  });
+  if (!updated) throw conflict("already_reviewed", "This evidence has already been reviewed.");
+
+  const issued = approve ? await issueForEvidence(services, updated.id, reviewer.id) : [];
+  return { evidence: toPublicEvidence(updated, earnedPoints(updated)), issuedStamps: issued.map((stamp) => stamp.category) };
+}
+
+async function findOwner(store: PassportStore, userId: string) {
+  const owner = await store.findUserById(userId);
+  if (!owner) throw notFound("Evidence owner not found.");
+  return owner;
+}
+
+/**
+ * Issues the stamps and reputation a verified evidence record earns.
+ * Idempotent: repeated calls for the same evidence create nothing new.
+ * Refuses evidence that is not verified.
+ */
+export async function issueForEvidence(services: Services, evidenceId: string, issuedById: string | null) {
+  const store = requireStore(services);
+  const evidence = await store.findEvidence(evidenceId);
+  if (!evidence) throw notFound("Evidence not found.");
+  if (evidence.status !== "verified") {
+    throw conflict("not_verified", "Stamps can only be issued for verified evidence.");
+  }
+
+  const [held, events, verified] = await Promise.all([
+    store.listStamps(evidence.userId),
+    store.listReputation(evidence.userId),
+    store.listVerifiedEvidence(evidence.userId),
+  ]);
+  const plan = planIssuance({
+    evidence: { id: evidence.id, kind: evidence.kind, occurredAt: evidence.occurredAt },
+    verifiedSoFar: verified,
+    heldStamps: new Set(held.map((stamp) => stamp.category)),
+    alreadyCredited: events.some((event) => event.evidenceId === evidence.id && event.kind === "contribution-verified"),
+  });
+  const contribution = plan.reputation.find((event) => event.kind === "contribution-verified");
+
+  return store.writeIssuance({
+    userId: evidence.userId,
+    evidenceId: evidence.id,
+    issuedById,
+    stamps: plan.stamps.map((stamp) => ({ category: stamp.category, points: pointsForStamp[stamp.category] })),
+    contribution: contribution ? { source: contribution.source, points: contribution.points } : null,
+  });
+}
+
+/** Reviewer view of the queue. Includes the submitter's address and internal notes. */
+export async function listForReview(services: Services, reviewer: UserRecord, status: EvidenceRecord["status"]) {
+  const store = requireStore(services);
+  requireRole(reviewer, ["reviewer", "admin"]);
+  const records = await store.listEvidence({ status, limit: 100 });
+  return Promise.all(
+    records.map(async (record) => ({
+      ...toPublicEvidence(record, 0),
+      submitter: (await store.findUserById(record.userId))?.address ?? null,
+      reviewerNote: record.reviewerNote,
+      canReview: services.handlers[record.kind].reviewerApproves && record.userId !== reviewer.id,
+    })),
+  );
+}

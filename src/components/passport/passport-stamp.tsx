@@ -1,7 +1,6 @@
 import { StampMotifArt } from "@/components/passport/stamp-motifs";
 import { formatDate } from "@/lib/format";
-import { stampTierLabels } from "@/lib/labels";
-import type { StampColor, StampDefinition } from "@/lib/types";
+import type { StampColor, StampDefinition } from "@/lib/passport/stamps";
 
 const stampFill: Record<StampColor, string> = {
   purple: "var(--monad-400)",
@@ -37,8 +36,8 @@ const stampOutline = perforatedRect(2, 2, 96, 9, 2.6);
 
 type PassportStampProps = {
   stamp: StampDefinition;
-  /** Date the stamp was awarded. Omit to render the stamp as locked. */
-  awardedOn?: string;
+  /** Date the stamp was issued. Omit to render the stamp as locked. */
+  issuedAt?: string;
   size?: "sm" | "md" | "lg";
   showLabel?: boolean;
 };
@@ -53,10 +52,10 @@ const sizeClass = {
  * A crayon-style passport stamp. Earned stamps are coloured and cancelled
  * with a postmark; locked stamps are greyed out with their earning rule.
  */
-export function PassportStamp({ stamp, awardedOn, size = "md", showLabel = true }: PassportStampProps) {
-  const awardedLabel = awardedOn ? formatDate(awardedOn) : null;
+export function PassportStamp({ stamp, issuedAt, size = "md", showLabel = true }: PassportStampProps) {
+  const awardedLabel = issuedAt ? formatDate(issuedAt) : null;
   const earned = awardedLabel !== null;
-  const tilt = (stamp.id.length % 5) - 2;
+  const tilt = (stamp.category.length % 5) - 2;
 
   return (
     <figure className="flex flex-col items-center gap-2 text-center">
@@ -69,7 +68,7 @@ export function PassportStamp({ stamp, awardedOn, size = "md", showLabel = true 
         role="img"
         aria-label={
           earned
-            ? `${stamp.name} stamp, ${stampTierLabels[stamp.tier].toLowerCase()}, awarded ${awardedLabel}`
+            ? `${stamp.name} stamp, issued ${awardedLabel}`
             : `${stamp.name} stamp, not earned yet`
         }
       >
@@ -110,10 +109,10 @@ export function PassportStamp({ stamp, awardedOn, size = "md", showLabel = true 
             <path d="M58 26c4-3 8 3 12 0s8 3 12 0 8 3 12 0" />
           </g>
         )}
-        {stamp.tier !== "common" && earned && (
+        {stamp.category === "consistent-contributor" && earned && (
           <path
             d="M19 15l2 4.5 5 .5-3.7 3.4 1 4.9L19 26l-4.3 2.3 1-4.9L12 20l5-.5Z"
-            fill={stamp.tier === "legendary" ? "var(--crayon-yellow)" : "var(--paper)"}
+            fill="var(--crayon-yellow)"
             stroke="var(--ink)"
             strokeWidth="1.4"
             strokeLinejoin="round"

@@ -4,7 +4,8 @@ import { PassportStamp } from "@/components/passport/passport-stamp";
 import { ChogIllustration } from "@/components/ui/chog-illustration";
 import { PageContainer, SectionHeading } from "@/components/ui/page-header";
 import { SampleDataBadge } from "@/components/ui/sample-data-badge";
-import { getCampaigns, getStampCatalogue } from "@/lib/data";
+import { getCampaigns } from "@/lib/data";
+import { orderedStamps } from "@/lib/passport/stamps";
 
 const pillars = [
   {
@@ -37,9 +38,9 @@ const journey = [
 ];
 
 export default async function HomePage() {
-  const [campaigns, catalogue] = await Promise.all([getCampaigns(), getStampCatalogue()]);
+  const campaigns = await getCampaigns();
   const featured = campaigns.filter((campaign) => campaign.status === "open").slice(0, 3);
-  const heroStamps = catalogue.filter((stamp) => ["chog-heart", "builder", "crayon-artist", "first-collab"].includes(stamp.id));
+  const heroStamps = orderedStamps.slice(0, 4);
 
   return (
     <PageContainer className="gap-20 md:gap-28">
@@ -83,7 +84,7 @@ export default async function HomePage() {
             <ChogIllustration className="mx-auto my-3 h-40 w-auto" />
             <div className="grid grid-cols-4 gap-2">
               {heroStamps.map((stamp) => (
-                <PassportStamp key={stamp.id} stamp={stamp} awardedOn="2026-09-01" size="sm" showLabel={false} />
+                <PassportStamp key={stamp.category} stamp={stamp} issuedAt="2026-09-01" size="sm" showLabel={false} />
               ))}
             </div>
           </div>

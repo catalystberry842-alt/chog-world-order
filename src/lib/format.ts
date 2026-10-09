@@ -37,10 +37,15 @@ const monthFormat = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
 });
 
-export function formatDate(isoDate: string) {
-  return dateFormat.format(new Date(`${isoDate}T00:00:00Z`));
+// Accepts a calendar day ("2026-09-14") or a full ISO timestamp.
+function parseDate(value: string) {
+  return new Date(value.length === 10 ? `${value}T00:00:00Z` : value);
 }
 
-export function formatMonth(isoDate: string) {
-  return monthFormat.format(new Date(`${isoDate}T00:00:00Z`));
+export function formatDate(value: string) {
+  return dateFormat.format(parseDate(value));
+}
+
+export function formatMonth(value: string) {
+  return monthFormat.format(parseDate(value));
 }

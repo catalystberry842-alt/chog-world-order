@@ -1,35 +1,29 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { connection } from "next/server";
 import { Suspense } from "react";
-import { ContributionHistory } from "@/components/passport/contribution-history";
-import { PassportCover } from "@/components/passport/passport-cover";
-import { ReputationPreview } from "@/components/passport/reputation-preview";
-import { StampCollection } from "@/components/passport/stamp-collection";
-import { PageContainer, SectionHeading } from "@/components/ui/page-header";
-import { SampleDataNotice } from "@/components/ui/sample-data-badge";
-import { ProfileSkeleton, LoadingLabel } from "@/components/ui/skeletons";
+import { PassportView } from "@/components/passport/passport-view";
+import { PageContainer } from "@/components/ui/page-header";
+import { LoadingLabel, ProfileSkeleton } from "@/components/ui/skeletons";
 import { EmptyState, ErrorState } from "@/components/ui/state-panels";
-import {
-  getContributions,
-  getContributorAddresses,
-  getEarnedStamps,
-  getRankedContributor,
-  getStampCatalogue,
-  isValidAddress,
-} from "@/lib/data";
+import { getSamplePassport, getSamplePassportAddresses } from "@/lib/data";
 import { shortAddress } from "@/lib/format";
+import { normalizeAddress } from "@/lib/passport/address";
+import type { PublicPassport } from "@/lib/passport/types";
+import { getPassport } from "@/server/passport/service";
+import { getServices } from "@/server/services";
 
 export async function generateStaticParams() {
-  const addresses = await getContributorAddresses();
+  const addresses = await getSamplePassportAddresses();
   return addresses.map((address) => ({ address }));
 }
 
 export async function generateMetadata({ params }: PageProps<"/profile/[address]">): Promise<Metadata> {
   const { address } = await params;
-  const contributor = isValidAddress(address) ? await getRankedContributor(address) : undefined;
+  const sample = normalizeAddress(address) ? await getSamplePassport(address) : undefined;
   return {
-    title: contributor?.displayName ?? shortAddress(address),
-    description: "Public Chog Passport: stamps, reputation, and verified activity history.",
+    title: sample?.profile.displayName ?? (normalizeAddress(address) ? shortAddress(address) : "Invalid address"),
+    description: "Public Chog Passport: stamps, verified contributions, and reputation breakdown.",
   };
 }
 
@@ -53,18 +47,39 @@ export default function ProfilePage({ params }: PageProps<"/profile/[address]">)
   );
 }
 
-async function Profile({ params }: Pick<PageProps<"/profile/[address]">, "params">) {
-  const { address: rawAddress } = await params;
-  const address = decodeURIComponent(rawAddress);
+type Lookup =
+  | { kind: "found"; passport: PublicPassport }
+  | { kind: "missing"; serviceConfigured: boolean };
 
-  if (!isValidAddress(address)) {
+/**
+ * Real passports come from the database. Sample passports exist only for the
+ * fake 0xc406… addresses and are always labelled. A database record always
+ * wins over a sample.
+ */
+async function lookup(address: string): Promise<Lookup> {
+  const services = getServices();
+  if (services.store) {
+    await connection(); // database reads happen at request time, never at build time
+    const passport = await getPassport(services, address, null);
+    if (passport) return { kind: "found", passport };
+  }
+  const sample = await getSamplePassport(address);
+  if (sample) return { kind: "found", passport: sample };
+  return { kind: "missing", serviceConfigured: Boolean(services.store) };
+}
+
+async function Profile({ params }: Pick<PageProps<"/profile/[address]">, "params">) {
+  const { address: raw } = await params;
+  const address = normalizeAddress(decodeURIComponent(raw));
+
+  if (!address) {
     return (
       <ErrorState
         title="That doesn't look like a wallet address"
         description={
           <>
-            Profiles live at <span className="font-mono">/profile/0x…</span> followed by a 40-character hex
-            address. Check the link and try again.
+            Profiles live at <span className="font-mono">/profile/0x…</span> followed by a 40-character hex address.
+            Check the link and try again.
           </>
         }
         action={
@@ -76,14 +91,9 @@ async function Profile({ params }: Pick<PageProps<"/profile/[address]">, "params
     );
   }
 
-  const [contributor, catalogue, earned, contributions] = await Promise.all([
-    getRankedContributor(address),
-    getStampCatalogue(),
-    getEarnedStamps(address),
-    getContributions(address),
-  ]);
+  const result = await lookup(address);
 
-  if (!contributor) {
+  if (result.kind === "missing") {
     return (
       <div className="flex flex-col gap-6">
         <header className="glass flex flex-col gap-2 rounded-[2rem] p-6 sm:p-8">
@@ -92,11 +102,15 @@ async function Profile({ params }: Pick<PageProps<"/profile/[address]">, "params
           <p className="font-mono text-sm break-all text-white/55">{address}</p>
         </header>
         <EmptyState
-          title="No passport activity yet"
-          description="This address hasn't recorded any contributions, stamps, or collabs. If it's yours, open the Passport page to get started."
+          title="No passport for this address"
+          description={
+            result.serviceConfigured
+              ? "This address has not signed in or recorded any verified activity yet. Wallet connection alone does not create a passport."
+              : "Passport records are not available on this deployment (no database is configured), so only sample profiles can be shown."
+          }
           action={
             <Link href="/passport" className="btn btn-primary btn-sm">
-              Open passport
+              Open your passport
             </Link>
           }
         />
@@ -104,44 +118,11 @@ async function Profile({ params }: Pick<PageProps<"/profile/[address]">, "params
     );
   }
 
-  const reviewed = contributions.filter((c) => c.status === "peer-reviewed" || c.status === "onchain-verified");
-
+  const { passport } = result;
   return (
-    <div className="flex flex-col gap-10">
-      <h1 className="sr-only">{contributor.displayName}&apos;s public profile</h1>
-      <PassportCover contributor={contributor} />
-
-      <SampleDataNotice>
-        Sample profile. This contributor and their history are mock data. “Peer reviewed” items show how reviewed
-        records will look; none are verified on-chain.
-      </SampleDataNotice>
-
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-        <section aria-labelledby="activity-heading" className="flex flex-col gap-4">
-          <SectionHeading
-            id="activity-heading"
-            title="Activity history"
-            description={`${reviewed.length} of ${contributions.length} records reviewed`}
-          />
-          <ContributionHistory contributions={contributions} />
-        </section>
-        <aside className="flex flex-col gap-4 lg:sticky lg:top-24">
-          <ReputationPreview score={contributor.score} rank={contributor.rank} />
-        </aside>
-      </div>
-
-      <section aria-labelledby="profile-stamps-heading" className="flex flex-col gap-4">
-        <SectionHeading
-          id="profile-stamps-heading"
-          title="Stamps"
-          description={`${earned.length} earned. Stamps are records; minting as NFTs is optional and not available yet.`}
-        />
-        {earned.length > 0 ? (
-          <StampCollection catalogue={catalogue} earned={earned} showLocked={false} />
-        ) : (
-          <EmptyState compact title="No stamps yet" description="Stamps are awarded for reviewed contributions." />
-        )}
-      </section>
-    </div>
+    <>
+      <h1 className="sr-only">{passport.profile.displayName ?? shortAddress(passport.address)} public profile</h1>
+      <PassportView passport={passport} audience="public" idPrefix="profile" />
+    </>
   );
 }

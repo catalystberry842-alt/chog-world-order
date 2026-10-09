@@ -6,7 +6,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { PageContainer, PageHeader } from "@/components/ui/page-header";
 import { SampleDataBadge, SampleDataNotice } from "@/components/ui/sample-data-badge";
 import { EmptyState } from "@/components/ui/state-panels";
-import { getLeaderboard } from "@/lib/data";
+import { getSampleLeaderboard } from "@/lib/data";
 import { formatNumber } from "@/lib/format";
 
 export const metadata: Metadata = {
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 export default async function LeaderboardPage() {
-  const contributors = await getLeaderboard();
+  const contributors = await getSampleLeaderboard();
   const podium = contributors.slice(0, 3);
 
   return (
@@ -44,18 +44,18 @@ export default async function LeaderboardPage() {
                   }`}
                 >
                   <span className="font-hand text-3xl text-white/60">#{contributor.rank}</span>
-                  <Avatar name={contributor.displayName} hue={contributor.avatarHue} size="lg" />
-                  <span className="font-display text-lg font-semibold">{contributor.displayName}</span>
-                  <span className="text-xs text-white/50">{contributor.skills.slice(0, 2).join(" · ")}</span>
-                  <span className="font-display text-3xl font-semibold">{formatNumber(contributor.score.total)}</span>
+                  <Avatar name={contributor.profile.displayName ?? ""} hue={contributor.profile.avatarHue} size="lg" />
+                  <span className="font-display text-lg font-semibold">{contributor.profile.displayName}</span>
+                  <span className="text-xs text-white/50">{contributor.profile.skills.slice(0, 2).join(" · ")}</span>
+                  <span className="font-display text-3xl font-semibold">{formatNumber(contributor.reputation.total)}</span>
                 </Link>
               </li>
             ))}
           </ol>
 
           <SampleDataNotice>
-            These contributors and scores are mock data. In the live version, only reviewed or on-chain verified
-            contributions earn full points.
+            These contributors and scores are mock data, computed with the same rules as real passports. Real
+            rankings will come from verified records once the leaderboard reads from the Passport database.
           </SampleDataNotice>
 
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
