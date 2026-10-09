@@ -4,13 +4,18 @@ import type {
   EvidenceRecord,
   EvidenceUpdate,
   IssuanceWrite,
+  LeaderboardRow,
   NewEvidence,
   PassportStore,
   ReputationRecord,
+  ReputationWrite,
   SessionRecord,
+  SnapshotRecord,
+  SnapshotWrite,
   StampRecord,
   UserRecord,
   UserRole,
+  VerifiedEvidenceRow,
 } from "@/server/passport/store";
 import type { Address } from "@/lib/types";
 
@@ -24,6 +29,7 @@ export class MemoryPassportStore implements PassportStore {
   evidence: EvidenceRecord[] = [];
   stamps: StampRecord[] = [];
   reputation: ReputationRecord[] = [];
+  snapshots: SnapshotRecord[] = [];
 
   private now = () => new Date();
 
@@ -79,6 +85,7 @@ export class MemoryPassportStore implements PassportStore {
     const record: EvidenceRecord = {
       ...input,
       id: randomUUID(),
+      verificationData: input.verificationData ?? null,
       reviewerNote: null,
       reviewerId: null,
       reviewedAt: null,
@@ -113,74 +120,114 @@ export class MemoryPassportStore implements PassportStore {
     return this.stamps.filter((stamp) => stamp.userId === userId).map((stamp) => ({ ...stamp }));
   }
 
-  async listReputation(userId: string) {
-    return this.reputation.filter((event) => event.userId === userId).map((event) => ({ ...event }));
-  }
-
-  async listVerifiedEvidence(userId: string) {
+  async listVerifiedEvidence(userId: string): Promise<VerifiedEvidenceRow[]> {
     return this.evidence
       .filter((item) => item.userId === userId && item.status === "verified")
-      .map(({ id, kind, occurredAt }) => ({ id, kind, occurredAt }));
+      .map(({ id, kind, occurredAt, verifiedAt, createdAt }) => ({ id, kind, occurredAt, verifiedAt: verifiedAt ?? createdAt }));
   }
 
   async writeIssuance(write: IssuanceWrite) {
     const created: StampRecord[] = [];
-    const now = this.now();
-
-    if (
-      write.contribution &&
-      !this.reputation.some((event) => event.evidenceId === write.evidenceId && event.kind === "contribution-verified")
-    ) {
-      this.reputation.push({
-        id: randomUUID(),
-        userId: write.userId,
-        kind: "contribution-verified",
-        points: write.contribution.points,
-        source: write.contribution.source,
-        reason: "Verified contribution",
-        evidenceId: write.evidenceId,
-        stampId: null,
-        createdAt: now,
-      });
-    }
-
-    for (const stamp of write.stamps) {
+    for (const category of write.stamps) {
       const duplicate = this.stamps.some(
         (item) =>
-          (item.userId === write.userId && item.category === stamp.category) ||
-          (item.evidenceId === write.evidenceId && item.category === stamp.category),
+          (item.userId === write.userId && item.category === category) ||
+          (item.evidenceId === write.evidenceId && item.category === category),
       );
       if (duplicate) continue;
       const record: StampRecord = {
         id: randomUUID(),
         userId: write.userId,
-        category: stamp.category,
+        category,
         evidenceId: write.evidenceId,
-        issuedAt: now,
+        issuedAt: this.now(),
         issuedById: write.issuedById,
       };
       this.stamps.push(record);
-      this.reputation.push({
-        id: randomUUID(),
-        userId: write.userId,
-        kind: "stamp-issued",
-        points: stamp.points,
-        source: "stamps",
-        reason: "Stamp issued",
-        evidenceId: null,
-        stampId: record.id,
-        createdAt: now,
-      });
       created.push({ ...record });
     }
     return created;
   }
 
+  async listReputation(userId: string) {
+    return this.reputation.filter((event) => event.userId === userId).map((event) => ({ ...event }));
+  }
+
+  async updateLedger(
+    userId: string,
+    decide: (state: { ledger: ReputationRecord[]; verified: VerifiedEvidenceRow[] }) => {
+      writes: ReputationWrite[];
+      snapshot: SnapshotWrite | null;
+    },
+  ) {
+    // Single-threaded: the read-decide-write sequence below cannot interleave.
+    const { writes, snapshot } = decide({
+      ledger: await this.listReputation(userId),
+      verified: await this.listVerifiedEvidence(userId),
+    });
+    for (const write of writes) {
+      if (this.reputation.some((event) => event.dedupeKey === write.dedupeKey)) {
+        throw new Error(`unique violation: dedupeKey ${write.dedupeKey}`);
+      }
+      if (write.reversesEventId && this.reputation.some((event) => event.reversesEventId === write.reversesEventId)) {
+        throw new Error(`unique violation: reversesEventId ${write.reversesEventId}`);
+      }
+    }
+    const now = this.now();
+    const created = writes.map((write) => ({ ...write, id: randomUUID(), userId, createdAt: now }));
+    this.reputation.push(...created);
+    if (snapshot) this.snapshots.push({ ...snapshot, id: randomUUID(), userId, createdAt: now });
+    return created.map((event) => ({ ...event }));
+  }
+
+  async listSnapshots(userId: string, limit: number) {
+    return this.snapshots
+      .filter((snapshot) => snapshot.userId === userId)
+      .slice(-limit)
+      .reverse();
+  }
+
+  async listUsersWithReputationData() {
+    const ids = new Set([
+      ...this.evidence.filter((item) => item.status === "verified").map((item) => item.userId),
+      ...this.reputation.map((event) => event.userId),
+    ]);
+    return [...ids].sort();
+  }
+
+  private totals(category: string | null) {
+    const totals = new Map<string, { points: number; total: number }>();
+    for (const event of this.reputation) {
+      const entry = totals.get(event.userId) ?? { points: 0, total: 0 };
+      entry.total += event.points;
+      if (!category || event.category === category) entry.points += event.points;
+      totals.set(event.userId, entry);
+    }
+    return totals;
+  }
+
   async rankOf(userId: string) {
-    const totals = new Map<string, number>();
-    for (const event of this.reputation) totals.set(event.userId, (totals.get(event.userId) ?? 0) + event.points);
-    const mine = totals.get(userId) ?? 0;
+    const totals = this.totals(null);
+    const mine = totals.get(userId)?.total ?? 0;
     if (mine <= 0) return null;
-    return [...totals.values()].filter((total) => total > mine).length + 1;
+    return [...totals.values()].filter((entry) => entry.total > mine).length + 1;
+  }
+
+  async leaderboard(input: { category: string | null; skip: number; take: number }) {
+    const rows: LeaderboardRow[] = [...this.totals(input.category)]
+      .filter(([, entry]) => entry.points > 0)
+      .map(([userId, entry]) => {
+        const user = this.users.find((item) => item.id === userId);
+        return {
+          userId,
+          address: user?.address ?? ("0x" as Address),
+          displayName: user?.displayName ?? null,
+          points: entry.points,
+          total: entry.total,
+          verifiedCount: this.evidence.filter((item) => item.userId === userId && item.status === "verified").length,
+        };
+      })
+      .sort((a, b) => b.points - a.points || (a.userId < b.userId ? -1 : 1));
+    return { rows: rows.slice(input.skip, input.skip + input.take), total: rows.length };
   }
 }

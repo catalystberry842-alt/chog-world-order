@@ -4,6 +4,9 @@
  * reviewer notes.
  */
 import type { Address, DataSource } from "@/lib/types";
+import type { ReputationBreakdown } from "@/lib/reputation/engine";
+import type { ReputationCategory } from "@/lib/reputation/config";
+import type { ReputationTier } from "@/lib/reputation/tiers";
 
 export const stampCategories = [
   "monad-explorer",
@@ -39,10 +42,8 @@ export type VerificationMethod =
   | "maintainer-approval"
   | "campaign-acceptance";
 
-export const reputationSources = ["onchain", "community", "code", "research", "campaigns", "stamps"] as const;
-export type ReputationSource = (typeof reputationSources)[number];
-
-export type ReputationBreakdown = Record<ReputationSource, number> & { total: number };
+export type { ReputationBreakdown } from "@/lib/reputation/engine";
+export type { ReputationCategory } from "@/lib/reputation/config";
 
 export type EvidenceReference = {
   /** Human-readable pointer, e.g. "PR #42 · org/repo" or a short tx hash. */
@@ -66,8 +67,10 @@ export type PublicEvidence = {
   occurredAt: string;
   submittedAt: string;
   verifiedAt: string | null;
-  /** Reputation earned by this record (0 unless verified). */
+  /** Reputation earned by this record (0 unless verified and within limits). */
   points: number;
+  /** Public verification details (block number, app, reviewer decision time...). */
+  verificationData: Record<string, string | number> | null;
   source: DataSource;
 };
 
@@ -93,7 +96,7 @@ export type PublicPassport = {
   joinedAt: string;
   /** 1-based rank by total reputation, or null when the passport has no reputation yet. */
   rank: number | null;
-  reputation: ReputationBreakdown;
+  reputation: PublicReputation;
   verifiedContributionCount: number;
   stamps: PublicStamp[];
   /** Public views list verified records only; the owner also sees pending and rejected ones. */
@@ -101,12 +104,48 @@ export type PublicPassport = {
   source: DataSource;
 };
 
+export type PublicReputationEvent = {
+  id: string;
+  kind: "contribution" | "consistency" | "adjustment" | "reversal";
+  category: ReputationCategory;
+  points: number;
+  reason: string;
+  periodKey: string | null;
+  calculationVersion: string;
+  createdAt: string;
+  /** The evidence that supports this event, when there is one. */
+  evidence: { id: string; kind: EvidenceKind; title: string; reference: EvidenceReference } | null;
+  /** True when a later event reversed this one. */
+  reversed: boolean;
+};
+
+export type PublicReputation = {
+  total: number;
+  breakdown: ReputationBreakdown;
+  tier: ReputationTier;
+  calculationVersion: string;
+  /** Weeks that earned (or hit the cap for) the consistency bonus, newest first. */
+  consistency: { week: string; points: number }[];
+  /** Ledger events, newest first. */
+  events: PublicReputationEvent[];
+};
+
 export type LeaderboardEntry = {
   address: Address;
-  profile: PassportProfile;
+  displayName: string | null;
+  avatarHue: number;
   rank: number;
-  reputation: ReputationBreakdown;
-  stampCount: number;
+  /** Total score, or the selected category's points when filtering. */
+  points: number;
+  total: number;
+  tier: string;
   verifiedContributionCount: number;
-  source: DataSource;
+};
+
+export type LeaderboardPage = {
+  entries: LeaderboardEntry[];
+  page: number;
+  pageSize: number;
+  totalEntries: number;
+  category: ReputationCategory | null;
 };

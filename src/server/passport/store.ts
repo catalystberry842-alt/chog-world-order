@@ -8,7 +8,7 @@ import type { Address } from "@/lib/types";
  * `MemoryPassportStore` (tests). Both enforce the same uniqueness rules:
  * - evidence dedupeKey is unique (DuplicateEvidenceError),
  * - one stamp per (user, category) and per (evidence, category),
- * - one contribution event per evidence, one stamp event per stamp,
+ * - reputation events are unique by dedupeKey and reversed at most once,
  * - a sign-in nonce can create only one session (NonceReusedError).
  */
 
@@ -46,8 +46,12 @@ export type EvidenceRecord = {
   chainId: number | null;
   txHash: string | null;
   appId: string | null;
+  /** Reputation category derived from the kind at submission. */
+  category: string;
   occurredAt: Date;
   statusReason: string | null;
+  /** Public verification details (block number, app, reviewer decision time...). */
+  verificationData: Record<string, string | number> | null;
   reviewerNote: string | null;
   reviewerId: string | null;
   reviewedAt: Date | null;
@@ -64,16 +68,55 @@ export type StampRecord = {
   issuedById: string | null;
 };
 
+export type ReputationEventKind = "contribution" | "consistency" | "adjustment" | "reversal";
+
 export type ReputationRecord = {
   id: string;
   userId: string;
-  kind: "contribution-verified" | "stamp-issued" | "adjustment";
+  kind: ReputationEventKind;
   points: number;
-  source: string;
+  category: string;
   reason: string;
+  planKey: string | null;
+  dedupeKey: string;
+  calculationVersion: string;
   evidenceId: string | null;
-  stampId: string | null;
+  periodKey: string | null;
+  reversesEventId: string | null;
+  actorId: string | null;
   createdAt: Date;
+};
+
+export type ReputationWrite = Omit<ReputationRecord, "id" | "userId" | "createdAt">;
+
+export type SnapshotCause = "verification" | "recalculation" | "adjustment";
+
+export type SnapshotRecord = {
+  id: string;
+  userId: string;
+  total: number;
+  breakdown: Record<string, number>;
+  tier: string;
+  calculationVersion: string;
+  cause: SnapshotCause;
+  eventCount: number;
+  triggeredById: string | null;
+  createdAt: Date;
+};
+
+export type SnapshotWrite = Omit<SnapshotRecord, "id" | "userId" | "createdAt">;
+
+/** Evidence fields the reputation engine reads. */
+export type VerifiedEvidenceRow = Pick<EvidenceRecord, "id" | "kind" | "occurredAt"> & { verifiedAt: Date };
+
+export type LeaderboardRow = {
+  userId: string;
+  address: Address;
+  displayName: string | null;
+  /** Points in the filtered category, or the total when unfiltered. */
+  points: number;
+  total: number;
+  verifiedCount: number;
 };
 
 export type NewEvidence = Omit<
@@ -84,7 +127,14 @@ export type NewEvidence = Omit<
 export type EvidenceUpdate = Partial<
   Pick<
     EvidenceRecord,
-    "status" | "statusReason" | "reviewerNote" | "reviewerId" | "reviewedAt" | "verifiedAt" | "occurredAt"
+      | "status"
+    | "statusReason"
+    | "reviewerNote"
+    | "reviewerId"
+    | "reviewedAt"
+    | "verifiedAt"
+    | "occurredAt"
+    | "verificationData"
   >
 >;
 
@@ -92,8 +142,7 @@ export type IssuanceWrite = {
   userId: string;
   evidenceId: string;
   issuedById: string | null;
-  stamps: { category: StampCategory; points: number }[];
-  contribution: { source: string; points: number } | null;
+  stamps: StampCategory[];
 };
 
 export interface PassportStore {
@@ -119,15 +168,35 @@ export interface PassportStore {
   ): Promise<EvidenceRecord | null>;
 
   listStamps(userId: string): Promise<StampRecord[]>;
-  listReputation(userId: string): Promise<ReputationRecord[]>;
-  /** Verified evidence of a user (id, kind, occurredAt), used by stamp rules. */
-  listVerifiedEvidence(userId: string): Promise<Pick<EvidenceRecord, "id" | "kind" | "occurredAt">[]>;
+  /** Verified evidence of a user, used by stamp rules and the reputation engine. */
+  listVerifiedEvidence(userId: string): Promise<VerifiedEvidenceRow[]>;
   /**
-   * Writes stamps and reputation events in one transaction. Rows that already
-   * exist are skipped, so calling this twice for the same evidence is a no-op.
+   * Creates stamps in one transaction. Existing (user, category) or
+   * (evidence, category) rows are skipped, so repeating a call is a no-op.
    * Returns the stamps that were newly created.
    */
   writeIssuance(write: IssuanceWrite): Promise<StampRecord[]>;
+
+  /** The user's full reputation ledger, oldest first. */
+  listReputation(userId: string): Promise<ReputationRecord[]>;
+  /**
+   * Atomically updates one user's ledger. Runs `decide` with the current
+   * ledger and verified evidence while holding a per-user lock, then writes
+   * the returned events (unique dedupeKey) and snapshot in the same
+   * transaction. Returns the events that were created.
+   */
+  updateLedger(
+    userId: string,
+    decide: (state: { ledger: ReputationRecord[]; verified: VerifiedEvidenceRow[] }) => {
+      writes: ReputationWrite[];
+      snapshot: SnapshotWrite | null;
+    },
+  ): Promise<ReputationRecord[]>;
+  listSnapshots(userId: string, limit: number): Promise<SnapshotRecord[]>;
+  /** Ids of users who have verified evidence or reputation events. */
+  listUsersWithReputationData(): Promise<string[]>;
   /** 1-based rank by total reputation, or null when the user has none. */
   rankOf(userId: string): Promise<number | null>;
+  /** Users ranked by total (or by one category), highest first. Users with no points are excluded. */
+  leaderboard(input: { category: string | null; skip: number; take: number }): Promise<{ rows: LeaderboardRow[]; total: number }>;
 }

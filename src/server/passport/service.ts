@@ -1,39 +1,33 @@
 import { normalizeAddress } from "@/lib/passport/address";
-import { breakdownFromEvents, pointsForEvidence, pointsForStamp } from "@/lib/passport/reputation";
-import { planIssuance } from "@/lib/passport/rules";
-import type { EvidenceReference, PublicEvidence, PublicPassport, PublicStamp } from "@/lib/passport/types";
+import { planStamps } from "@/lib/passport/rules";
+import type { PublicEvidence, PublicPassport, PublicStamp } from "@/lib/passport/types";
+import { categoryForEvidence } from "@/lib/reputation/config";
 import { badRequest, conflict, DuplicateEvidenceError, forbidden, notFound } from "@/server/errors";
 import { requireRole, requireStore, type AuthContext } from "@/server/auth/session";
-import type { EvidenceRecord, PassportStore, StampRecord, UserRecord } from "@/server/passport/store";
+import { evidenceReference } from "@/server/passport/evidence-reference";
+import type { EvidenceRecord, PassportStore, ReputationRecord, StampRecord, UserRecord } from "@/server/passport/store";
+import { buildPublicReputation, recalculateReputation } from "@/server/reputation/service";
 import type { Services } from "@/server/services";
 import type { EvidenceClaim } from "@/server/verification/types";
 
-const EXPLORER_TX_URL = "https://monadscan.com/tx/";
-
-const earnedPoints = (record: EvidenceRecord) => (record.status === "verified" ? pointsForEvidence[record.kind] : 0);
+/**
+ * Net reputation points earned directly by each evidence record, from the
+ * ledger: contribution events plus any reversals of them. Consistency
+ * bonuses are counted separately.
+ */
+export function pointsByEvidence(ledger: ReputationRecord[]) {
+  const points = new Map<string, number>();
+  for (const event of ledger) {
+    if (!event.evidenceId || event.category === "consistency" || event.category === "adjustment") continue;
+    points.set(event.evidenceId, (points.get(event.evidenceId) ?? 0) + event.points);
+  }
+  return points;
+}
 
 // ---------------------------------------------------------------------------
 // Public read model. Nothing here exposes reviewer notes, dedupe keys,
 // reviewer ids, or session data.
 // ---------------------------------------------------------------------------
-
-export function evidenceReference(record: Pick<EvidenceRecord, "kind" | "reference" | "txHash" | "chainId">): EvidenceReference {
-  if (record.kind === "onchain-interaction" && record.txHash) {
-    return {
-      label: `Transaction ${record.txHash.slice(0, 10)}…${record.txHash.slice(-6)}`,
-      url: `${EXPLORER_TX_URL}${record.txHash}`,
-      txHash: record.txHash,
-      chainId: record.chainId,
-    };
-  }
-  if (record.kind === "campaign-deliverable") {
-    return { label: `Deliverable · ${record.reference}`, url: null, txHash: null, chainId: null };
-  }
-  // Off-chain references were canonicalised to https URLs at submission.
-  const url = record.reference.startsWith("https://") ? record.reference : null;
-  const label = url ? url.replace(/^https:\/\//, "").slice(0, 80) : record.reference.slice(0, 80);
-  return { label, url, txHash: null, chainId: null };
-}
 
 function toPublicEvidence(record: EvidenceRecord, points: number): PublicEvidence {
   return {
@@ -49,6 +43,7 @@ function toPublicEvidence(record: EvidenceRecord, points: number): PublicEvidenc
     submittedAt: record.createdAt.toISOString(),
     verifiedAt: record.verifiedAt?.toISOString() ?? null,
     points,
+    verificationData: record.verificationData,
     source: "database",
   };
 }
@@ -81,17 +76,15 @@ export async function getPassport(services: Services, rawAddress: string, viewer
   if (!user) return null;
 
   const isOwner = viewer?.id === user.id;
-  const [evidence, stamps, events, rank] = await Promise.all([
+  const [evidence, stamps, ledger, rank, reputation] = await Promise.all([
     store.listEvidence({ userId: user.id, limit: 500 }),
     store.listStamps(user.id),
     store.listReputation(user.id),
     store.rankOf(user.id),
+    buildPublicReputation(store, user.id),
   ]);
 
-  const pointsFor = (evidenceId: string) =>
-    events
-      .filter((event) => event.evidenceId === evidenceId && event.kind === "contribution-verified")
-      .reduce((sum, event) => sum + event.points, 0);
+  const earned = pointsByEvidence(ledger);
   const evidenceById = new Map(evidence.map((record) => [record.id, record]));
 
   const passport: PublicPassport = {
@@ -99,14 +92,14 @@ export async function getPassport(services: Services, rawAddress: string, viewer
     profile: { displayName: user.displayName, handle: null, bio: null, skills: [], avatarHue: parseInt(address.slice(2, 8), 16) % 360 },
     joinedAt: user.createdAt.toISOString(),
     rank,
-    reputation: breakdownFromEvents(events),
+    reputation,
     verifiedContributionCount: evidence.filter((record) => record.status === "verified").length,
     stamps: stamps
       .map((stamp) => toPublicStamp(stamp, evidenceById.get(stamp.evidenceId)))
       .filter((stamp): stamp is PublicStamp => stamp !== null),
     contributions: evidence
       .filter((record) => isOwner || record.status === "verified")
-      .map((record) => toPublicEvidence(record, pointsFor(record.id))),
+      .map((record) => toPublicEvidence(record, earned.get(record.id) ?? 0)),
     source: "database",
   };
   return passport;
@@ -147,8 +140,10 @@ export async function submitEvidence(services: Services, auth: AuthContext, clai
       chainId: prepared.chainId,
       txHash: prepared.txHash,
       appId: prepared.appId,
+      category: categoryForEvidence[claim.kind],
       occurredAt,
       statusReason: "Received. Verification has not run yet.",
+      verificationData: null,
     });
   } catch (error) {
     if (error instanceof DuplicateEvidenceError) throw conflict("duplicate_evidence", error.message);
@@ -162,10 +157,11 @@ export async function submitEvidence(services: Services, auth: AuthContext, clai
       statusReason: outcome.reason,
       occurredAt: outcome.occurredAt ?? record.occurredAt,
       verifiedAt: outcome.status === "verified" ? now : null,
+      verificationData: outcome.data ?? null,
     })) ?? record;
 
-  const issued = updated.status === "verified" ? await issueForEvidence(services, updated.id, null) : [];
-  return { evidence: toPublicEvidence(updated, earnedPoints(updated)), issuedStamps: issued.map((stamp) => stamp.category) };
+  const issued = updated.status === "verified" ? await issueForEvidence(services, updated.id, null) : null;
+  return result(updated, issued);
 }
 
 export type ReviewDecision = {
@@ -207,10 +203,11 @@ export async function reviewEvidence(services: Services, reviewer: UserRecord, e
       statusReason: outcome.reason,
       occurredAt: outcome.occurredAt ?? evidence.occurredAt,
       verifiedAt: outcome.status === "verified" ? now : null,
+      verificationData: outcome.data ?? null,
     });
     if (!updated) throw conflict("changed", "This evidence changed while you were reviewing it.");
-    const issued = updated.status === "verified" ? await issueForEvidence(services, updated.id, reviewer.id) : [];
-    return { evidence: toPublicEvidence(updated, earnedPoints(updated)), issuedStamps: issued.map((stamp) => stamp.category) };
+    const issued = updated.status === "verified" ? await issueForEvidence(services, updated.id, reviewer.id) : null;
+    return result(updated, issued);
   }
 
   if (!handler.reviewerApproves) {
@@ -231,11 +228,12 @@ export async function reviewEvidence(services: Services, reviewer: UserRecord, e
     reviewerId: reviewer.id,
     reviewedAt: now,
     verifiedAt: approve ? now : null,
+    verificationData: { decision: approve ? "approved" : "rejected", reviewedAt: now.toISOString() },
   });
   if (!updated) throw conflict("already_reviewed", "This evidence has already been reviewed.");
 
-  const issued = approve ? await issueForEvidence(services, updated.id, reviewer.id) : [];
-  return { evidence: toPublicEvidence(updated, earnedPoints(updated)), issuedStamps: issued.map((stamp) => stamp.category) };
+  const issued = approve ? await issueForEvidence(services, updated.id, reviewer.id) : null;
+  return result(updated, issued);
 }
 
 async function findOwner(store: PassportStore, userId: string) {
@@ -244,8 +242,16 @@ async function findOwner(store: PassportStore, userId: string) {
   return owner;
 }
 
+function result(evidence: EvidenceRecord, issued: Awaited<ReturnType<typeof issueForEvidence>> | null) {
+  return {
+    evidence: toPublicEvidence(evidence, issued?.points ?? 0),
+    issuedStamps: issued?.stamps.map((stamp) => stamp.category) ?? [],
+  };
+}
+
 /**
- * Issues the stamps and reputation a verified evidence record earns.
+ * Issues what a verified evidence record earns: its stamps, then a
+ * reputation recalculation through the rules engine.
  * Idempotent: repeated calls for the same evidence create nothing new.
  * Refuses evidence that is not verified.
  */
@@ -257,26 +263,21 @@ export async function issueForEvidence(services: Services, evidenceId: string, i
     throw conflict("not_verified", "Stamps can only be issued for verified evidence.");
   }
 
-  const [held, events, verified] = await Promise.all([
-    store.listStamps(evidence.userId),
-    store.listReputation(evidence.userId),
-    store.listVerifiedEvidence(evidence.userId),
-  ]);
-  const plan = planIssuance({
-    evidence: { id: evidence.id, kind: evidence.kind, occurredAt: evidence.occurredAt },
-    verifiedSoFar: verified,
-    heldStamps: new Set(held.map((stamp) => stamp.category)),
-    alreadyCredited: events.some((event) => event.evidenceId === evidence.id && event.kind === "contribution-verified"),
-  });
-  const contribution = plan.reputation.find((event) => event.kind === "contribution-verified");
-
-  return store.writeIssuance({
+  const [held, verified] = await Promise.all([store.listStamps(evidence.userId), store.listVerifiedEvidence(evidence.userId)]);
+  const stamps = await store.writeIssuance({
     userId: evidence.userId,
     evidenceId: evidence.id,
     issuedById,
-    stamps: plan.stamps.map((stamp) => ({ category: stamp.category, points: pointsForStamp[stamp.category] })),
-    contribution: contribution ? { source: contribution.source, points: contribution.points } : null,
+    stamps: planStamps({
+      evidence: { id: evidence.id, kind: evidence.kind, occurredAt: evidence.occurredAt },
+      verifiedSoFar: verified,
+      heldStamps: new Set(held.map((stamp) => stamp.category)),
+    }).map((stamp) => stamp.category),
   });
+
+  const events = await recalculateReputation(services, evidence.userId, { cause: "verification", actorId: issuedById });
+  const ledger = await store.listReputation(evidence.userId);
+  return { stamps, events, points: pointsByEvidence(ledger).get(evidence.id) ?? 0 };
 }
 
 /** Reviewer view of the queue. Includes the submitter's address and internal notes. */

@@ -80,9 +80,9 @@ describe("duplicate evidence", () => {
     expect((await approve(services, reviewer.cookie, id)).status).toBe(409);
 
     expect(services.memory.stamps).toHaveLength(1);
-    const contributionEvents = services.memory.reputation.filter((event) => event.kind === "contribution-verified");
+    const contributionEvents = services.memory.reputation.filter((event) => event.kind === "contribution");
     expect(contributionEvents).toHaveLength(1);
-    expect(services.memory.reputation.filter((event) => event.kind === "stamp-issued")).toHaveLength(1);
+    expect(contributionEvents[0].points).toBe(5);
   });
 
   it("gives one stamp per category even with several verified records", async () => {
@@ -92,7 +92,7 @@ describe("duplicate evidence", () => {
       await approve(services, reviewer.cookie, body.evidence!.id);
     }
     expect(services.memory.stamps.map((stamp) => stamp.category)).toEqual(["community-contributor"]);
-    expect(services.memory.reputation.filter((event) => event.kind === "contribution-verified")).toHaveLength(3);
+    expect(services.memory.reputation.filter((event) => event.kind === "contribution")).toHaveLength(3);
   });
 
   it("issues Consistent Contributor once, after verified work in four distinct weeks", async () => {

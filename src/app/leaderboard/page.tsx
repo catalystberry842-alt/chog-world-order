@@ -1,71 +1,104 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { LeaderboardList } from "@/components/leaderboard/leaderboard-list";
+import { connection } from "next/server";
+import { Suspense } from "react";
+import { LeaderboardFilters, LeaderboardList } from "@/components/leaderboard/leaderboard-list";
 import { ScoringRules } from "@/components/leaderboard/scoring-rules";
-import { Avatar } from "@/components/ui/avatar";
 import { PageContainer, PageHeader } from "@/components/ui/page-header";
-import { SampleDataBadge, SampleDataNotice } from "@/components/ui/sample-data-badge";
+import { LoadingLabel } from "@/components/ui/skeletons";
 import { EmptyState } from "@/components/ui/state-panels";
-import { getSampleLeaderboard } from "@/lib/data";
-import { formatNumber } from "@/lib/format";
+import { reputationCategoryLabels } from "@/lib/reputation/config";
+import { leaderboardQuerySchema } from "@/server/api/schemas";
+import { getLeaderboard } from "@/server/reputation/service";
+import { getServices } from "@/server/services";
 
 export const metadata: Metadata = {
   title: "Leaderboard",
-  description: "Contributor rankings with a transparent score breakdown for every point.",
+  description: "Contributor rankings from verified contributions, with the evidence behind every score.",
 };
 
-export default async function LeaderboardPage() {
-  const contributors = await getSampleLeaderboard();
-  const podium = contributors.slice(0, 3);
-
+export default function LeaderboardPage({ searchParams }: PageProps<"/leaderboard">) {
   return (
     <PageContainer>
       <PageHeader
         eyebrow="Contribution reputation"
         title="Who's doing the work"
-        description="Rankings come from reviewed contributions, stamps, and completed collabs. Open any row to see exactly where the points came from."
-        badges={<SampleDataBadge label="Sample contributors" />}
+        description="Rankings come only from verified contributions. Open any profile to see every event behind a score."
       />
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+        <Suspense fallback={<BoardSkeleton />}>
+          <Board searchParams={searchParams} />
+        </Suspense>
+        <div className="lg:sticky lg:top-24">
+          <ScoringRules />
+        </div>
+      </div>
+    </PageContainer>
+  );
+}
 
-      {contributors.length === 0 ? (
+async function Board({ searchParams }: Pick<PageProps<"/leaderboard">, "searchParams">) {
+  const raw = await searchParams;
+  const query = leaderboardQuerySchema.safeParse({
+    category: typeof raw.category === "string" ? raw.category : undefined,
+    page: typeof raw.page === "string" ? raw.page : undefined,
+  });
+  const category = query.success ? (query.data.category ?? null) : null;
+  const page = query.success ? query.data.page : 1;
+
+  const services = getServices();
+  if (!services.store) {
+    return (
+      <div className="flex flex-col gap-4">
+        <LeaderboardFilters active={category} />
         <EmptyState
-          title="No contributors ranked yet"
-          description="Rankings appear once the first contributions are reviewed."
+          title="Leaderboard unavailable"
+          description="This deployment has no Passport database, so there are no verified contributors to rank. Sample profiles are never ranked."
+          action={
+            <Link href="/passport" className="btn btn-ghost btn-sm">
+              See a sample passport
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
+
+  await connection(); // read the database at request time
+  const data = await getLeaderboard(services, { category, page });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <LeaderboardFilters active={category} />
+      {data.entries.length === 0 ? (
+        <EmptyState
+          title={page > 1 ? "No more contributors" : "No ranked contributors yet"}
+          description={
+            category
+              ? `Nobody has earned ${reputationCategoryLabels[category].toLowerCase()} points yet.`
+              : "Rankings appear once contributions are verified. Connecting a wallet does not earn a place."
+          }
+          action={
+            <Link href="/passport" className="btn btn-primary btn-sm">
+              Submit evidence
+            </Link>
+          }
         />
       ) : (
-        <>
-          <ol className="grid gap-4 sm:grid-cols-3" aria-label="Top three">
-            {podium.map((contributor) => (
-              <li key={contributor.address}>
-                <Link
-                  href={`/profile/${contributor.address}`}
-                  className={`glass flex h-full flex-col items-center gap-3 rounded-3xl p-6 text-center transition hover:border-white/20 ${
-                    contributor.rank === 1 ? "sm:-translate-y-2 sm:border-crayon-yellow/30" : ""
-                  }`}
-                >
-                  <span className="text-sm font-semibold text-white/60 tabular-nums">#{contributor.rank}</span>
-                  <Avatar name={contributor.profile.displayName ?? ""} hue={contributor.profile.avatarHue} size="lg" />
-                  <span className="text-lg font-semibold">{contributor.profile.displayName}</span>
-                  <span className="text-xs text-white/50">{contributor.profile.skills.slice(0, 2).join(" · ")}</span>
-                  <span className="text-3xl font-semibold">{formatNumber(contributor.reputation.total)}</span>
-                </Link>
-              </li>
-            ))}
-          </ol>
-
-          <SampleDataNotice>
-            These contributors and scores are mock data, computed with the same rules as real passports. Real
-            rankings will come from verified records once the leaderboard reads from the Passport database.
-          </SampleDataNotice>
-
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-            <LeaderboardList contributors={contributors} />
-            <div className="lg:sticky lg:top-24">
-              <ScoringRules />
-            </div>
-          </div>
-        </>
+        <LeaderboardList data={data} />
       )}
-    </PageContainer>
+    </div>
+  );
+}
+
+function BoardSkeleton() {
+  return (
+    <div className="flex flex-col gap-3" aria-hidden="true">
+      <div className="skeleton h-9 w-full" />
+      {Array.from({ length: 6 }, (_, index) => (
+        <div key={index} className="skeleton h-16 w-full" />
+      ))}
+      <LoadingLabel>Loading leaderboard…</LoadingLabel>
+    </div>
   );
 }

@@ -7,6 +7,7 @@ export function PassportCover({ passport, actions }: { passport: PublicPassport;
   const name = passport.profile.displayName ?? shortAddress(passport.address);
   const stats = [
     { label: "Reputation", value: formatNumber(passport.reputation.total) },
+    { label: "Tier", value: passport.reputation.tier.title },
     { label: "Rank", value: passport.rank ? `#${passport.rank}` : "—" },
     { label: "Verified contributions", value: passport.verifiedContributionCount },
     { label: "Stamps", value: passport.stamps.length },
@@ -39,7 +40,7 @@ export function PassportCover({ passport, actions }: { passport: PublicPassport;
           ))}
         </ul>
       )}
-      <dl className="relative mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <dl className="relative mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {stats.map((stat) => (
           <div key={stat.label} className="rounded-2xl bg-night-950/40 px-4 py-3 ring-1 ring-white/[0.06]">
             <dt className="text-xs text-white/55">{stat.label}</dt>

@@ -5,6 +5,7 @@ import {
   type Evidence as EvidenceRow,
   type PassportStamp as StampRow,
   type ReputationEvent as ReputationRow,
+  type ReputationSnapshot as SnapshotRow,
   type User as UserRow,
   type WalletSession as SessionRow,
 } from "@/generated/prisma/client";
@@ -15,12 +16,18 @@ import type {
   EvidenceRecord,
   EvidenceUpdate,
   IssuanceWrite,
+  LeaderboardRow,
   NewEvidence,
   PassportStore,
+  ReputationEventKind,
   ReputationRecord,
+  ReputationWrite,
   SessionRecord,
+  SnapshotRecord,
+  SnapshotWrite,
   StampRecord,
   UserRecord,
+  VerifiedEvidenceRow,
 } from "@/server/passport/store";
 
 // Enum mapping between database (UPPER_SNAKE) and domain (kebab-case) values.
@@ -64,8 +71,10 @@ const mapEvidence = (row: EvidenceRow): EvidenceRecord => ({
   chainId: row.chainId,
   txHash: row.txHash,
   appId: row.appId,
+  category: row.category,
   occurredAt: row.occurredAt,
   statusReason: row.statusReason,
+  verificationData: (row.verificationData as Record<string, string | number> | null) ?? null,
   reviewerNote: row.reviewerNote,
   reviewerId: row.reviewerId,
   reviewedAt: row.reviewedAt,
@@ -82,21 +91,54 @@ const mapStamp = (row: StampRow): StampRecord => ({
   issuedById: row.issuedById,
 });
 
+const eventKindToDb: Record<ReputationEventKind, ReputationRow["kind"]> = {
+  contribution: "CONTRIBUTION",
+  consistency: "CONSISTENCY_BONUS",
+  adjustment: "ADJUSTMENT",
+  reversal: "REVERSAL",
+};
+const eventKindFromDb = Object.fromEntries(Object.entries(eventKindToDb).map(([k, v]) => [v, k])) as Record<
+  ReputationRow["kind"],
+  ReputationEventKind
+>;
+
 const mapReputation = (row: ReputationRow): ReputationRecord => ({
   id: row.id,
   userId: row.userId,
-  kind: fromDb(row.kind),
+  kind: eventKindFromDb[row.kind],
   points: row.points,
-  source: row.source,
+  category: row.category,
   reason: row.reason,
+  planKey: row.planKey,
+  dedupeKey: row.dedupeKey,
+  calculationVersion: row.calculationVersion,
   evidenceId: row.evidenceId,
-  stampId: row.stampId,
+  periodKey: row.periodKey,
+  reversesEventId: row.reversesEventId,
+  actorId: row.actorId,
+  createdAt: row.createdAt,
+});
+
+const mapSnapshot = (row: SnapshotRow): SnapshotRecord => ({
+  id: row.id,
+  userId: row.userId,
+  total: row.total,
+  breakdown: row.breakdown as Record<string, number>,
+  tier: row.tier,
+  calculationVersion: row.calculationVersion,
+  cause: fromDb(row.cause),
+  eventCount: row.eventCount,
+  triggeredById: row.triggeredById,
   createdAt: row.createdAt,
 });
 
 function evidenceUpdateData(update: EvidenceUpdate): Prisma.EvidenceUpdateManyMutationInput {
-  const { status, ...rest } = update;
-  return { ...rest, ...(status ? { status: toDb(status) as EvidenceRow["status"] } : {}) };
+  const { status, verificationData, ...rest } = update;
+  return {
+    ...rest,
+    ...(status ? { status: toDb(status) as EvidenceRow["status"] } : {}),
+    ...(verificationData !== undefined ? { verificationData: verificationData ?? Prisma.DbNull } : {}),
+  };
 }
 
 export class PrismaPassportStore implements PassportStore {
@@ -151,8 +193,10 @@ export class PrismaPassportStore implements PassportStore {
           chainId: input.chainId,
           txHash: input.txHash,
           appId: input.appId,
+          category: input.category,
           occurredAt: input.occurredAt,
           statusReason: input.statusReason,
+          verificationData: input.verificationData ?? Prisma.DbNull,
         },
       });
       return mapEvidence(row);
@@ -193,69 +237,93 @@ export class PrismaPassportStore implements PassportStore {
     return rows.map(mapStamp);
   }
 
-  async listReputation(userId: string) {
-    const rows = await this.db.reputationEvent.findMany({ where: { userId }, orderBy: { createdAt: "desc" } });
-    return rows.map(mapReputation);
-  }
-
-  async listVerifiedEvidence(userId: string) {
+  async listVerifiedEvidence(userId: string): Promise<VerifiedEvidenceRow[]> {
     const rows = await this.db.evidence.findMany({
       where: { userId, status: "VERIFIED" },
-      select: { id: true, kind: true, occurredAt: true },
+      select: { id: true, kind: true, occurredAt: true, verifiedAt: true, createdAt: true },
     });
-    return rows.map((row) => ({ id: row.id, kind: fromDb<EvidenceKind>(row.kind), occurredAt: row.occurredAt }));
+    return rows.map((row) => ({
+      id: row.id,
+      kind: fromDb<EvidenceKind>(row.kind),
+      occurredAt: row.occurredAt,
+      verifiedAt: row.verifiedAt ?? row.createdAt,
+    }));
   }
 
   async writeIssuance(write: IssuanceWrite) {
-    return this.db.$transaction(async (tx) => {
-      if (write.contribution) {
-        // Unique (evidenceId, kind): a second call inserts nothing.
-        await tx.reputationEvent.createMany({
-          data: [
-            {
-              userId: write.userId,
-              kind: "CONTRIBUTION_VERIFIED",
-              points: write.contribution.points,
-              source: write.contribution.source,
-              reason: "Verified contribution",
-              evidenceId: write.evidenceId,
-            },
-          ],
-          skipDuplicates: true,
-        });
-      }
+    if (write.stamps.length === 0) return [];
+    // ON CONFLICT DO NOTHING on (userId, category) and (evidenceId, category):
+    // only stamps that did not exist yet come back.
+    const rows = await this.db.passportStamp.createManyAndReturn({
+      data: write.stamps.map((category) => ({
+        userId: write.userId,
+        category: toDb(category) as StampRow["category"],
+        evidenceId: write.evidenceId,
+        issuedById: write.issuedById,
+      })),
+      skipDuplicates: true,
+    });
+    return rows.map(mapStamp);
+  }
 
-      const created: StampRecord[] = [];
-      for (const stamp of write.stamps) {
-        // ON CONFLICT DO NOTHING on (userId, category) and (evidenceId, category):
-        // only stamps that did not exist yet come back.
-        const rows = await tx.passportStamp.createManyAndReturn({
-          data: [
-            {
-              userId: write.userId,
-              category: toDb(stamp.category) as StampRow["category"],
-              evidenceId: write.evidenceId,
-              issuedById: write.issuedById,
-            },
-          ],
-          skipDuplicates: true,
+  async listReputation(userId: string) {
+    const rows = await this.db.reputationEvent.findMany({ where: { userId }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+    return rows.map(mapReputation);
+  }
+
+  async updateLedger(
+    userId: string,
+    decide: (state: { ledger: ReputationRecord[]; verified: VerifiedEvidenceRow[] }) => {
+      writes: ReputationWrite[];
+      snapshot: SnapshotWrite | null;
+    },
+  ) {
+    return this.db.$transaction(async (tx) => {
+      // Serialise ledger updates per user for the duration of this transaction.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`reputation:${userId}`}))`;
+      const [ledgerRows, verifiedRows] = await Promise.all([
+        tx.reputationEvent.findMany({ where: { userId }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
+        tx.evidence.findMany({
+          where: { userId, status: "VERIFIED" },
+          select: { id: true, kind: true, occurredAt: true, verifiedAt: true, createdAt: true },
+        }),
+      ]);
+      const { writes, snapshot } = decide({
+        ledger: ledgerRows.map(mapReputation),
+        verified: verifiedRows.map((row) => ({
+          id: row.id,
+          kind: fromDb<EvidenceKind>(row.kind),
+          occurredAt: row.occurredAt,
+          verifiedAt: row.verifiedAt ?? row.createdAt,
+        })),
+      });
+      const created: ReputationRecord[] = [];
+      for (const write of writes) {
+        const row = await tx.reputationEvent.create({
+          data: { ...write, userId, kind: eventKindToDb[write.kind] },
         });
-        for (const row of rows) {
-          await tx.reputationEvent.create({
-            data: {
-              userId: write.userId,
-              kind: "STAMP_ISSUED",
-              points: stamp.points,
-              source: "stamps",
-              reason: "Stamp issued",
-              stampId: row.id,
-            },
-          });
-          created.push(mapStamp(row));
-        }
+        created.push(mapReputation(row));
+      }
+      if (snapshot) {
+        await tx.reputationSnapshot.create({
+          data: { ...snapshot, userId, cause: toDb(snapshot.cause) as SnapshotRow["cause"] },
+        });
       }
       return created;
     });
+  }
+
+  async listSnapshots(userId: string, limit: number) {
+    const rows = await this.db.reputationSnapshot.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: limit });
+    return rows.map(mapSnapshot);
+  }
+
+  async listUsersWithReputationData() {
+    const [evidence, events] = await Promise.all([
+      this.db.evidence.findMany({ where: { status: "VERIFIED" }, select: { userId: true }, distinct: ["userId"] }),
+      this.db.reputationEvent.findMany({ select: { userId: true }, distinct: ["userId"] }),
+    ]);
+    return [...new Set([...evidence, ...events].map((row) => row.userId))].sort();
   }
 
   async rankOf(userId: string) {
@@ -263,5 +331,39 @@ export class PrismaPassportStore implements PassportStore {
     const mine = totals.find((row) => row.userId === userId)?._sum.points ?? 0;
     if (mine <= 0) return null;
     return totals.filter((row) => (row._sum.points ?? 0) > mine).length + 1;
+  }
+
+  async leaderboard(input: { category: string | null; skip: number; take: number }) {
+    const where = input.category ? { category: input.category } : {};
+    const [page, all] = await Promise.all([
+      this.db.reputationEvent.groupBy({
+        by: ["userId"],
+        where,
+        _sum: { points: true },
+        having: { points: { _sum: { gt: 0 } } },
+        orderBy: [{ _sum: { points: "desc" } }, { userId: "asc" }],
+        skip: input.skip,
+        take: input.take,
+      }),
+      this.db.reputationEvent.groupBy({ by: ["userId"], where, having: { points: { _sum: { gt: 0 } } } }),
+    ]);
+    const ids = page.map((row) => row.userId);
+    const [users, totals, counts] = await Promise.all([
+      this.db.user.findMany({ where: { id: { in: ids } } }),
+      this.db.reputationEvent.groupBy({ by: ["userId"], where: { userId: { in: ids } }, _sum: { points: true } }),
+      this.db.evidence.groupBy({ by: ["userId"], where: { userId: { in: ids }, status: "VERIFIED" }, _count: { _all: true } }),
+    ]);
+    const rows: LeaderboardRow[] = page.map((row) => {
+      const user = users.find((item) => item.id === row.userId);
+      return {
+        userId: row.userId,
+        address: (user?.address ?? "0x") as Address,
+        displayName: user?.displayName ?? null,
+        points: row._sum.points ?? 0,
+        total: totals.find((item) => item.userId === row.userId)?._sum.points ?? 0,
+        verifiedCount: counts.find((item) => item.userId === row.userId)?._count._all ?? 0,
+      };
+    });
+    return { rows, total: all.length };
   }
 }

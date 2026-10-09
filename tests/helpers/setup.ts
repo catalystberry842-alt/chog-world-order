@@ -33,7 +33,14 @@ export function makeServices(
     handlers: createHandlerRegistry({ onchainClient: options.onchainClient ?? null, apps: options.apps ?? [] }),
     // Real EOA signature verification (test keys are generated per run, never persisted).
     verifySignature: (input) => verifyMessage(input),
-    now: () => options.now ?? new Date(),
+    // With a fixed start time the clock still ticks 1 ms per read, like a real clock,
+    // so records created in sequence get distinct, ordered timestamps.
+    now: (() => {
+      if (!options.now) return () => new Date();
+      let tick = 0;
+      const base = options.now.getTime();
+      return () => new Date(base + tick++);
+    })(),
   };
 }
 

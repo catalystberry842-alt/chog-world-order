@@ -111,6 +111,12 @@ export function createOnchainHandler(options: OnchainHandlerOptions): Verificati
         status: "verified",
         reason: `Receipt, sender, contract, and ${app.event.name} event checked on Monad.`,
         occurredAt: new Date(Number(block.timestamp) * 1000),
+        data: {
+          app: app.id,
+          event: app.event.name,
+          blockNumber: Number(receipt.blockNumber),
+          confirmations: Number(head - receipt.blockNumber),
+        },
       };
     },
   };

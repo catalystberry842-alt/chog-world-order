@@ -7,9 +7,9 @@
 //   (Evidence.dedupeKey is unique), so duplicates can never produce extra stamps.
 // - A user holds at most one stamp per category, and a single evidence record
 //   can back at most one stamp of each category.
-// - Reputation is an append-only ledger. Each evidence record produces at most
-//   one CONTRIBUTION_VERIFIED event (unique evidenceId + kind), and each stamp at
-//   most one STAMP_ISSUED event (unique stampId; stamp events leave evidenceId null).
+// - Reputation is an append-only ledger (ReputationEvent). Every event has a
+//   unique dedupeKey; wrong events are reversed (at most once), never edited
+//   or deleted. Scores are the sum of the ledger and can be recomputed.
 
 generator client {
   provider = "prisma-client"
@@ -58,8 +58,15 @@ enum StampCategory {
 }
 
 enum ReputationEventKind {
-  CONTRIBUTION_VERIFIED
-  STAMP_ISSUED
+  CONTRIBUTION
+  CONSISTENCY_BONUS
+  ADJUSTMENT
+  REVERSAL
+}
+
+enum SnapshotCause {
+  VERIFICATION
+  RECALCULATION
   ADJUSTMENT
 }
 
@@ -72,12 +79,15 @@ model User {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  sessions         WalletSession[]
-  evidence         Evidence[]        @relation("EvidenceOwner")
-  reviewedEvidence Evidence[]        @relation("EvidenceReviewer")
-  stamps           PassportStamp[]   @relation("StampHolder")
-  issuedStamps     PassportStamp[]   @relation("StampIssuer")
-  reputationEvents ReputationEvent[]
+  sessions           WalletSession[]
+  evidence           Evidence[]           @relation("EvidenceOwner")
+  reviewedEvidence   Evidence[]           @relation("EvidenceReviewer")
+  stamps             PassportStamp[]      @relation("StampHolder")
+  issuedStamps       PassportStamp[]      @relation("StampIssuer")
+  reputationEvents   ReputationEvent[]    @relation("ReputationHolder")
+  reputationActions  ReputationEvent[]    @relation("ReputationActor")
+  snapshots          ReputationSnapshot[] @relation("SnapshotHolder")
+  triggeredSnapshots ReputationSnapshot[] @relation("SnapshotTrigger")
 }
 
 /// A wallet sign-in (SIWE). The cookie holds a random token; only its SHA-256 hash is stored.
@@ -103,6 +113,8 @@ model Evidence {
   userId             String
   user               User               @relation("EvidenceOwner", fields: [userId], references: [id], onDelete: Cascade)
   kind               EvidenceKind
+  /// Reputation category ("campaign", "protocol", "content", "research", "code").
+  category           String
   verificationMethod VerificationMethod
   status             EvidenceStatus     @default(PENDING)
   title              String
@@ -119,6 +131,8 @@ model Evidence {
   occurredAt         DateTime
   /// Short reason shown to the contributor and the public.
   statusReason       String?
+  /// What the verifier checked (block number, app id, event name, reviewer decision...). Public.
+  verificationData   Json?
   /// Reviewer-only note. Never returned by public APIs.
   reviewerNote       String?
   reviewerId         String?
@@ -132,6 +146,7 @@ model Evidence {
   reputationEvents ReputationEvent[]
 
   @@index([userId, status])
+  @@index([category, status])
   @@index([status, createdAt])
   @@index([kind, status])
 }
@@ -149,28 +164,61 @@ model PassportStamp {
   issuedById String?
   issuedBy   User?         @relation("StampIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
 
-  reputationEvents ReputationEvent[]
-
   @@unique([userId, category])
   @@unique([evidenceId, category])
   @@index([userId, issuedAt])
 }
 
 model ReputationEvent {
-  id         String              @id @default(cuid())
-  userId     String
-  user       User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  kind       ReputationEventKind
-  points     Int
-  /// Score bucket, e.g. "code" or "stamps". Matches the public reputation breakdown.
-  source     String
-  reason     String
-  evidenceId String?
-  evidence   Evidence?           @relation(fields: [evidenceId], references: [id], onDelete: Restrict)
-  stampId    String?             @unique
-  stamp      PassportStamp?      @relation(fields: [stampId], references: [id], onDelete: Restrict)
-  createdAt  DateTime            @default(now())
+  id                 String              @id @default(cuid())
+  userId             String
+  user               User                @relation("ReputationHolder", fields: [userId], references: [id], onDelete: Cascade)
+  kind               ReputationEventKind
+  /// Points awarded (negative for reversals and downward corrections). Always computed on the server.
+  points             Int
+  /// Score category, e.g. "code", "consistency", "adjustment". Matches the public breakdown.
+  category           String
+  /// Human-readable explanation shown in the public score history.
+  reason             String
+  /// Logical key from the rules engine (e.g. "contribution:<evidenceId>"). Null for adjustments and reversals.
+  planKey            String?
+  /// Physical idempotency key. Unique, so the same event can never be written twice.
+  dedupeKey          String              @unique
+  /// Version of the scoring rules that produced this event.
+  calculationVersion String
+  evidenceId         String?
+  evidence           Evidence?           @relation(fields: [evidenceId], references: [id], onDelete: Restrict)
+  /// Day ("2026-10-09") or ISO week ("2026-W41") the event counts toward.
+  periodKey          String?
+  /// For reversals: the event being reversed. Unique, so an event is reversed at most once.
+  reversesEventId    String?             @unique
+  reverses           ReputationEvent?    @relation("Reversal", fields: [reversesEventId], references: [id], onDelete: Restrict)
+  reversedBy         ReputationEvent?    @relation("Reversal")
+  /// Who made an adjustment or triggered a recalculation. Null for automatic events.
+  actorId            String?
+  actor              User?               @relation("ReputationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt          DateTime            @default(now())
 
-  @@unique([evidenceId, kind])
+  @@index([userId, createdAt])
+  @@index([userId, category])
+  @@index([planKey])
+}
+
+/// Score after each change, for history and fast reads. Always derivable from the ledger.
+model ReputationSnapshot {
+  id                 String        @id @default(cuid())
+  userId             String
+  user               User          @relation("SnapshotHolder", fields: [userId], references: [id], onDelete: Cascade)
+  total              Int
+  /// Points per category at this moment.
+  breakdown          Json
+  tier               String
+  calculationVersion String
+  cause              SnapshotCause
+  eventCount         Int
+  triggeredById      String?
+  triggeredBy        User?         @relation("SnapshotTrigger", fields: [triggeredById], references: [id], onDelete: SetNull)
+  createdAt          DateTime      @default(now())
+
   @@index([userId, createdAt])
 }

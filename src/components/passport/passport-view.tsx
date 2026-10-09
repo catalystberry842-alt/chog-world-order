@@ -1,7 +1,9 @@
 import { EvidenceList } from "@/components/evidence/evidence-list";
 import { PassportCover } from "@/components/passport/passport-cover";
 import { StampCollection } from "@/components/passport/stamp-collection";
-import { ReputationBreakdownCard } from "@/components/reputation/reputation-breakdown";
+import { ScoringRules } from "@/components/leaderboard/scoring-rules";
+import { ReputationCard } from "@/components/reputation/reputation-breakdown";
+import { ScoreEvents } from "@/components/reputation/score-events";
 import { SectionHeading } from "@/components/ui/page-header";
 import { SampleDataNotice } from "@/components/ui/sample-data-badge";
 import type { PublicPassport } from "@/lib/passport/types";
@@ -64,13 +66,31 @@ export function PassportView({
           />
         </section>
         <aside className="flex flex-col gap-4 lg:sticky lg:top-24">
-          <ReputationBreakdownCard
+          <ReputationCard
             reputation={passport.reputation}
             rank={passport.rank}
             verifiedCount={passport.verifiedContributionCount}
+            sample={passport.source === "mock"}
           />
         </aside>
       </div>
+
+      <section aria-labelledby={`${idPrefix}-score`} className="flex flex-col gap-4">
+        <SectionHeading
+          id={`${idPrefix}-score`}
+          title="Evidence behind the score"
+          description="Every point comes from an event in this ledger. Reversed events stay visible."
+        />
+        <ScoreEvents events={passport.reputation.events} />
+        <details className="group">
+          <summary className="cursor-pointer text-sm font-medium text-monad-300 hover:text-monad-200">
+            Read the scoring rules
+          </summary>
+          <div className="mt-4">
+            <ScoringRules id={`${idPrefix}-rules`} />
+          </div>
+        </details>
+      </section>
     </div>
   );
 }

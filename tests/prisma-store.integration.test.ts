@@ -8,6 +8,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { DuplicateEvidenceError, NonceReusedError } from "@/server/errors";
 import { PrismaPassportStore } from "@/server/passport/prisma-store";
+import type { ReputationWrite } from "@/server/passport/store";
 
 const url = process.env.TEST_DATABASE_URL;
 
@@ -19,7 +20,7 @@ describe.skipIf(!url)("PrismaPassportStore (PostgreSQL)", () => {
     db = new PrismaClient({ adapter: new PrismaPg({ connectionString: url! }) });
     store = new PrismaPassportStore(db);
     await db.$executeRawUnsafe(
-      'TRUNCATE "ReputationEvent", "PassportStamp", "Evidence", "WalletSession", "User" CASCADE',
+      'TRUNCATE "ReputationSnapshot", "ReputationEvent", "PassportStamp", "Evidence", "WalletSession", "User" CASCADE',
     );
   });
 
@@ -40,7 +41,9 @@ describe.skipIf(!url)("PrismaPassportStore (PostgreSQL)", () => {
     txHash: null,
     appId: null,
     occurredAt: new Date("2026-09-01T00:00:00Z"),
+    category: "content",
     statusReason: null,
+    verificationData: null,
   });
 
   it("enforces unique evidence at the database level", async () => {
@@ -52,32 +55,22 @@ describe.skipIf(!url)("PrismaPassportStore (PostgreSQL)", () => {
     );
   });
 
-  it("writes issuance idempotently", async () => {
+  it("writes stamps idempotently", async () => {
     const user = await store.upsertUser("0x00000000000000000000000000000000000000c3");
     const evidence = await store.createEvidence(newEvidence(user.id, "community-contribution:https://example.org/y"));
-    await store.updateEvidenceIfStatus(evidence.id, "pending", { status: "verified", verifiedAt: new Date() });
-    const write = {
-      userId: user.id,
-      evidenceId: evidence.id,
-      issuedById: null,
-      stamps: [{ category: "community-contributor" as const, points: 15 }],
-      contribution: { source: "community", points: 25 },
-    };
+    const write = { userId: user.id, evidenceId: evidence.id, issuedById: null, stamps: ["community-contributor" as const] };
     expect(await store.writeIssuance(write)).toHaveLength(1);
     expect(await store.writeIssuance(write)).toHaveLength(0);
     expect(await store.listStamps(user.id)).toHaveLength(1);
-    const events = await store.listReputation(user.id);
-    expect(events.map((event) => event.kind).sort()).toEqual(["contribution-verified", "stamp-issued"]);
-    expect(await store.rankOf(user.id)).toBe(1);
   });
 
   it("refuses a second stamp of the same category from different evidence", async () => {
     const user = await store.upsertUser("0x00000000000000000000000000000000000000d4");
     const first = await store.createEvidence(newEvidence(user.id, "community-contribution:https://example.org/z1"));
     const second = await store.createEvidence(newEvidence(user.id, "community-contribution:https://example.org/z2"));
-    const stamp = [{ category: "community-contributor" as const, points: 15 }];
-    await store.writeIssuance({ userId: user.id, evidenceId: first.id, issuedById: null, stamps: stamp, contribution: null });
-    const again = await store.writeIssuance({ userId: user.id, evidenceId: second.id, issuedById: null, stamps: stamp, contribution: null });
+    const stamp = ["community-contributor" as const];
+    await store.writeIssuance({ userId: user.id, evidenceId: first.id, issuedById: null, stamps: stamp });
+    const again = await store.writeIssuance({ userId: user.id, evidenceId: second.id, issuedById: null, stamps: stamp });
     expect(again).toHaveLength(0);
     expect(await store.listStamps(user.id)).toHaveLength(1);
   });
@@ -97,5 +90,73 @@ describe.skipIf(!url)("PrismaPassportStore (PostgreSQL)", () => {
     const session = { userId: user.id, nonce: "abcdefgh12345678", chainId: 143, expiresAt: new Date(Date.now() + 60_000) };
     await store.createSession({ ...session, tokenHash: "hash-1" });
     await expect(store.createSession({ ...session, tokenHash: "hash-2" })).rejects.toBeInstanceOf(NonceReusedError);
+  });
+
+  const write = (overrides: Partial<ReputationWrite>): ReputationWrite => ({
+    kind: "contribution",
+    points: 5,
+    category: "content",
+    reason: "test",
+    planKey: null,
+    dedupeKey: `key-${Math.random()}`,
+    calculationVersion: "test",
+    evidenceId: null,
+    periodKey: null,
+    reversesEventId: null,
+    actorId: null,
+    ...overrides,
+  });
+
+  it("enforces unique reputation event keys and single reversal in the database", async () => {
+    const user = await store.upsertUser("0x00000000000000000000000000000000000000a7");
+    const [event] = await store.updateLedger(user.id, () => ({ writes: [write({ dedupeKey: "dup-key" })], snapshot: null }));
+    await expect(store.updateLedger(user.id, () => ({ writes: [write({ dedupeKey: "dup-key" })], snapshot: null }))).rejects.toThrow();
+    await store.updateLedger(user.id, () => ({
+      writes: [write({ kind: "reversal", points: -5, dedupeKey: "rev-1", reversesEventId: event.id })],
+      snapshot: null,
+    }));
+    await expect(
+      store.updateLedger(user.id, () => ({
+        writes: [write({ kind: "reversal", points: -5, dedupeKey: "rev-2", reversesEventId: event.id })],
+        snapshot: null,
+      })),
+    ).rejects.toThrow();
+    // The failed transactions wrote nothing.
+    expect((await store.listReputation(user.id)).map((item) => item.dedupeKey)).toEqual(["dup-key", "rev-1"]);
+  });
+
+  it("serialises concurrent ledger updates for one user", async () => {
+    const user = await store.upsertUser("0x00000000000000000000000000000000000000a8");
+    // Each update writes "next" only if it has not been written: without the lock both would see an empty ledger.
+    const decide = ({ ledger }: { ledger: { dedupeKey: string }[] }) => ({
+      writes: ledger.some((item) => item.dedupeKey === "once") ? [] : [write({ dedupeKey: "once" })],
+      snapshot: null,
+    });
+    const results = await Promise.allSettled([store.updateLedger(user.id, decide), store.updateLedger(user.id, decide)]);
+    expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(await store.listReputation(user.id)).toHaveLength(1);
+  });
+
+  it("ranks the leaderboard from the ledger with category filters and pagination", async () => {
+    await db.$executeRawUnsafe('TRUNCATE "ReputationSnapshot", "ReputationEvent", "PassportStamp", "Evidence", "WalletSession", "User" CASCADE');
+    const users = await Promise.all(
+      ["b1", "b2", "b3"].map((suffix) => store.upsertUser(`0x00000000000000000000000000000000000000${suffix}`)),
+    );
+    await store.updateLedger(users[0].id, () => ({ writes: [write({ points: 10, category: "code" })], snapshot: null }));
+    await store.updateLedger(users[1].id, () => ({ writes: [write({ points: 20, category: "research" })], snapshot: null }));
+    await store.updateLedger(users[2].id, () => ({
+      writes: [write({ points: 5, category: "code" }), write({ kind: "adjustment", points: -5, category: "adjustment" })],
+      snapshot: null,
+    }));
+    const overall = await store.leaderboard({ category: null, skip: 0, take: 10 });
+    expect(overall.rows.map((row) => row.userId)).toEqual([users[1].id, users[0].id]);
+    expect(overall.total).toBe(2);
+    const code = await store.leaderboard({ category: "code", skip: 0, take: 10 });
+    expect(code.rows.map((row) => [row.userId, row.points, row.total])).toEqual([
+      [users[0].id, 10, 10],
+      [users[2].id, 5, 0],
+    ]);
+    const second = await store.leaderboard({ category: null, skip: 1, take: 1 });
+    expect(second.rows.map((row) => row.userId)).toEqual([users[0].id]);
   });
 });

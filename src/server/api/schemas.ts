@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { evidenceKinds, verificationStatuses } from "@/lib/passport/types";
+import { reputationCategories } from "@/lib/reputation/config";
 
 const text = (min: number, max: number) => z.string().trim().min(min).max(max);
 
@@ -34,3 +35,27 @@ export const signInSchema = z
   .strict();
 
 export const reviewQueueStatusSchema = z.enum(verificationStatuses).default("pending");
+
+/** Requests that must not carry data (e.g. recalculation): any field, including points, is rejected. */
+export const emptyBodySchema = z.object({}).strict();
+
+/**
+ * Admin correction. The only place a points value is accepted, and only from
+ * an admin, bounded, with a written reason that is stored with the admin's id.
+ */
+export const adjustmentSchema = z
+  .object({
+    points: z
+      .number()
+      .int()
+      .min(-100)
+      .max(100)
+      .refine((value) => value !== 0, "Adjustment cannot be zero."),
+    reason: text(10, 280),
+  })
+  .strict();
+
+export const leaderboardQuerySchema = z.object({
+  category: z.enum(reputationCategories).optional(),
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+});

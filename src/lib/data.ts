@@ -6,8 +6,8 @@
  * Real passports are read on the server through `src/server/passport`.
  */
 import { mockCampaigns } from "@/lib/mock/campaigns";
-import { getMockLeaderboard, getMockPassport, mockPassportAddresses } from "@/lib/mock/passports";
-import type { LeaderboardEntry, PublicPassport } from "@/lib/passport/types";
+import { getMockPassport, mockPassportAddresses } from "@/lib/mock/passports";
+import type { PublicPassport } from "@/lib/passport/types";
 import type { Address, Campaign } from "@/lib/types";
 
 // Campaigns -----------------------------------------------------------------
@@ -28,10 +28,6 @@ export async function getCampaignIds(): Promise<string[]> {
 
 export async function getSamplePassport(address: string): Promise<PublicPassport | undefined> {
   return getMockPassport(address);
-}
-
-export async function getSampleLeaderboard(): Promise<LeaderboardEntry[]> {
-  return getMockLeaderboard();
 }
 
 export async function getSamplePassportAddresses(): Promise<Address[]> {

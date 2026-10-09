@@ -16,13 +16,22 @@ import { assertSameOrigin, getAuth, requireAuth, requireRole, requireStore } fro
 import { badRequest, notFound } from "@/server/errors";
 import { handle, json, readBody } from "@/server/api/http";
 import {
+  adjustmentSchema,
+  emptyBodySchema,
   evidenceClaimSchema,
   issueSchema,
+  leaderboardQuerySchema,
   reviewQueueStatusSchema,
   reviewSchema,
   signInSchema,
 } from "@/server/api/schemas";
 import { getPassport, issueForEvidence, listForReview, reviewEvidence, submitEvidence } from "@/server/passport/service";
+import {
+  adjustReputation,
+  getLeaderboard,
+  getReputation,
+  recalculateReputation,
+} from "@/server/reputation/service";
 import type { Services } from "@/server/services";
 
 // Auth -----------------------------------------------------------------------
@@ -134,6 +143,101 @@ export const postIssueStamps = (request: Request, services: Services) =>
     const auth = await requireAuth(request, services);
     requireRole(auth.user, ["reviewer", "admin"]);
     const body = await readBody(request, issueSchema);
-    const created = await issueForEvidence(services, body.evidenceId, auth.user.id);
-    return json({ issued: created.map((stamp) => ({ id: stamp.id, category: stamp.category })) });
+    const result = await issueForEvidence(services, body.evidenceId, auth.user.id);
+    return json({
+      issued: result.stamps.map((stamp) => ({ id: stamp.id, category: stamp.category })),
+      reputationEventsCreated: result.events.length,
+    });
+  });
+
+// Reputation ------------------------------------------------------------------
+
+async function loadReputation(services: Services, address: string) {
+  requireStore(services);
+  if (!normalizeAddress(address)) throw badRequest("That is not a valid wallet address.", "invalid_address");
+  const result = await getReputation(services, address);
+  if (!result) throw notFound("No passport exists for this address yet.");
+  return result;
+}
+
+/** Score, tier, rank, per-category breakdown, consistency weeks, and snapshot history. */
+export const getReputationByAddress = (_request: Request, services: Services, address: string) =>
+  handle(async () => {
+    const { reputation, ...rest } = await loadReputation(services, address);
+    const { events, ...summary } = reputation;
+    return json({ ...rest, reputation: { ...summary, eventCount: events.length } });
+  });
+
+/** The ledger events behind a score, newest first, with supporting evidence. Paginated. */
+export const getReputationEvents = (request: Request, services: Services, address: string) =>
+  handle(async () => {
+    const { reputation } = await loadReputation(services, address);
+    const url = new URL(request.url);
+    const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+    const pageSize = 50;
+    return json({
+      address: normalizeAddress(address),
+      calculationVersion: reputation.calculationVersion,
+      page,
+      pageSize,
+      totalEvents: reputation.events.length,
+      events: reputation.events.slice((page - 1) * pageSize, page * pageSize),
+    });
+  });
+
+export const getLeaderboardPage = (request: Request, services: Services) =>
+  handle(async () => {
+    const url = new URL(request.url);
+    const query = leaderboardQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+    if (!query.success) throw badRequest("Unknown category or page.");
+    return json(await getLeaderboard(services, { category: query.data.category ?? null, page: query.data.page }));
+  });
+
+/**
+ * Re-runs the rules engine for one passport. Reviewer or admin only. Takes no
+ * points: the server derives every point from verified evidence.
+ */
+export const postRecalculate = (request: Request, services: Services, address: string) =>
+  handle(async () => {
+    assertSameOrigin(request, services);
+    const auth = await requireAuth(request, services);
+    requireRole(auth.user, ["reviewer", "admin"]);
+    await readBody(request, emptyBodySchema);
+    const store = requireStore(services);
+    const normalized = normalizeAddress(address);
+    if (!normalized) throw badRequest("That is not a valid wallet address.", "invalid_address");
+    const target = await store.findUserByAddress(normalized);
+    if (!target) throw notFound("No passport exists for this address yet.");
+    const created = await recalculateReputation(services, target.id, { cause: "recalculation", actorId: auth.user.id });
+    return json({ eventsCreated: created.length, reputation: (await loadReputation(services, normalized)).reputation.total });
+  });
+
+/** Authorized correction. Admin only, never on one's own score, always with a reason. */
+export const postAdjustment = (request: Request, services: Services, address: string) =>
+  handle(async () => {
+    assertSameOrigin(request, services);
+    const auth = await requireAuth(request, services);
+    requireRole(auth.user, ["admin"]);
+    const body = await readBody(request, adjustmentSchema);
+    const event = await adjustReputation(services, auth.user, address, body);
+    return json({ adjustment: { id: event.id, points: event.points, reason: event.reason } }, { status: 201 });
+  });
+
+/**
+ * Rebuilds every ledger from verified evidence with the current rules (for
+ * example after a rules-version change or a migration). Admin only.
+ */
+export const postRecalculateAll = (request: Request, services: Services) =>
+  handle(async () => {
+    assertSameOrigin(request, services);
+    const auth = await requireAuth(request, services);
+    requireRole(auth.user, ["admin"]);
+    await readBody(request, emptyBodySchema);
+    const store = requireStore(services);
+    let eventsCreated = 0;
+    const userIds = await store.listUsersWithReputationData();
+    for (const userId of userIds) {
+      eventsCreated += (await recalculateReputation(services, userId, { cause: "recalculation", actorId: auth.user.id })).length;
+    }
+    return json({ usersRecalculated: userIds.length, eventsCreated });
   });

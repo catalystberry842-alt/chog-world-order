@@ -9,8 +9,8 @@ export function SiteFooter() {
           <p className="text-lg font-semibold">{site.name}</p>
           <p className="text-sm leading-relaxed text-white/55">{site.description}</p>
           <p className="text-xs leading-relaxed text-white/40">
-            Phase 1 preview. Campaigns, contributors, stamps, and scores shown here are sample data. Nothing is
-            verified on-chain, no payments are processed, and no smart contracts are deployed.
+            Anything marked “Sample” is mock data for illustration. Real passports and scores come only from
+            verified evidence. No smart contracts are deployed and no payments are processed yet.
           </p>
         </div>
         <nav aria-label="Footer" className="flex flex-col gap-2 text-sm md:items-end">

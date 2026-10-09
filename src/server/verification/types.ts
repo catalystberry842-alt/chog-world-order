@@ -27,6 +27,8 @@ export type VerificationOutcome = {
   reason: string;
   /** Activity time established by the verifier (block time for on-chain evidence). */
   occurredAt?: Date;
+  /** Public details of what was checked, stored with the evidence. */
+  data?: Record<string, string | number>;
 };
 
 export type VerificationContext = { wallet: Address };

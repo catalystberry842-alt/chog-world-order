@@ -16,12 +16,16 @@ export function Avatar({
   size?: keyof typeof sizeClass;
   className?: string;
 }) {
-  const initials = name
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+  // Unnamed wallets show "0x1234…": use the first hex characters instead of "0".
+  const initials = (
+    /^0x[0-9a-f]/i.test(name)
+      ? name.slice(2, 4)
+      : name
+          .split(/\s+/)
+          .map((part) => part[0])
+          .join("")
+          .slice(0, 2)
+  ).toUpperCase();
 
   return (
     <span
