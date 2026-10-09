@@ -7,7 +7,7 @@ import { evidenceKinds, stampCategories } from "@/lib/passport/types";
 export function ScoringRules() {
   return (
     <section id="how-scores-work" aria-labelledby="scoring-heading" className="glass scroll-mt-24 rounded-3xl p-6">
-      <h2 id="scoring-heading" className="font-display text-xl font-semibold">
+      <h2 id="scoring-heading" className="text-xl font-semibold">
         How scores work
       </h2>
       <p className="mt-2 text-sm leading-relaxed text-white/65">

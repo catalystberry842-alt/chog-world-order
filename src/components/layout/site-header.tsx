@@ -29,11 +29,11 @@ export function SiteHeader() {
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-night-950/75 backdrop-blur-lg">
+    <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-night-950">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
         <Link href="/" className="flex items-center gap-2.5" onClick={() => setMenuOpen(false)}>
           <LogoMark />
-          <span className="font-display text-lg font-semibold tracking-tight">{site.name}</span>
+          <span className="text-lg font-semibold tracking-tight">{site.name}</span>
         </Link>
 
         <nav aria-label="Primary" className="hidden items-center gap-1 md:flex">

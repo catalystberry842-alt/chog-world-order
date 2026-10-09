@@ -68,7 +68,7 @@ function ConnectedPassport({
           <p className={`text-xs font-medium ${onSupportedChain ? "text-crayon-mint" : "text-crayon-yellow"}`}>
             {onSupportedChain ? `Wallet connected on ${targetChain.name}` : "Wallet connected to an unsupported network"}
           </p>
-          <h2 id="wallet-heading" className="font-display text-2xl font-semibold">
+          <h2 id="wallet-heading" className="text-2xl font-semibold">
             Your passport
           </h2>
           <p className="font-mono text-sm break-all text-white/70">{address}</p>
@@ -160,7 +160,7 @@ function ConnectedPassport({
       ) : (
         <section className="glass flex flex-col items-center gap-4 rounded-[2rem] px-6 py-12 text-center">
           <ChogIllustration mood="sleepy" className="h-24 w-auto" />
-          <h3 className="font-display text-xl font-semibold">No passport record yet</h3>
+          <h3 className="text-xl font-semibold">No passport record yet</h3>
           <p className="max-w-lg text-sm leading-relaxed text-white/65">
             Connecting a wallet does not grant stamps or reputation. Sign in, submit evidence of something you did, and
             stamps are issued once it is verified.
@@ -178,12 +178,8 @@ function ConnectPrompt() {
       aria-labelledby="connect-heading"
       className="glass relative grid gap-6 overflow-hidden rounded-[2rem] p-6 sm:p-8 md:grid-cols-[1fr_auto] md:items-center"
     >
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -bottom-24 -left-16 h-64 w-64 rounded-full bg-blush-400/15 blur-3xl"
-      />
       <div className="relative flex max-w-xl flex-col gap-4">
-        <h2 id="connect-heading" className="font-display text-2xl font-semibold sm:text-3xl">
+        <h2 id="connect-heading" className="text-2xl font-semibold sm:text-3xl">
           Connect a wallet to open your passport
         </h2>
         <p className="leading-relaxed text-white/65">

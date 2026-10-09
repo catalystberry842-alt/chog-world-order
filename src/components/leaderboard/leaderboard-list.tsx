@@ -60,7 +60,7 @@ export function LeaderboardList({ contributors }: { contributors: LeaderboardEnt
               <details className="glass group rounded-3xl open:border-monad-400/30">
                 <summary className="flex cursor-pointer list-none items-center gap-3 p-4 sm:gap-4 sm:p-5 [&::-webkit-details-marker]:hidden">
                   <span
-                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-display text-sm font-semibold ${
+                    className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
                       position === 1
                         ? "bg-crayon-yellow text-ink"
                         : position <= 3
@@ -79,7 +79,7 @@ export function LeaderboardList({ contributors }: { contributors: LeaderboardEnt
                     <ReputationBar reputation={contributor.reputation} className="max-w-md" />
                   </span>
                   <span className="text-right">
-                    <span className="block font-display text-xl font-semibold tabular-nums">{formatNumber(value)}</span>
+                    <span className="block text-xl font-semibold tabular-nums">{formatNumber(value)}</span>
                     <span className="block text-xs text-white/45">
                       {sortKey === "total" ? "points" : `${sortOptions.find((o) => o.key === sortKey)?.label} pts`}
                     </span>

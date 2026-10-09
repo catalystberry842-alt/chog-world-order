@@ -26,11 +26,11 @@ export default async function CollabsPage() {
           <dl className="grid grid-cols-2 gap-3">
             <div className="glass rounded-2xl px-4 py-3">
               <dt className="text-xs text-white/55">Open campaigns</dt>
-              <dd className="font-display text-2xl font-semibold">{open.length}</dd>
+              <dd className="text-2xl font-semibold">{open.length}</dd>
             </div>
             <div className="glass rounded-2xl px-4 py-3">
               <dt className="text-xs text-white/55">Open budget</dt>
-              <dd className="font-display text-2xl font-semibold">
+              <dd className="text-2xl font-semibold">
                 {formatNumber(openBudget)} <span className="text-sm text-white/55">USDC</span>
               </dd>
             </div>

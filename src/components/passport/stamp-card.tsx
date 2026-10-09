@@ -10,7 +10,7 @@ export function StampCard({ stamp }: { stamp: PublicStamp }) {
   return (
     <article className="flex h-full flex-col items-center gap-2 text-center">
       <PassportStamp stamp={definition} issuedAt={stamp.issuedAt} showLabel={false} />
-      <h4 className="font-hand text-xl leading-none">{definition.name}</h4>
+      <h4 className="text-base leading-tight font-semibold">{definition.name}</h4>
       <p className="text-[11px] tracking-wide text-ink/60 uppercase">
         {stamp.source === "mock" ? "Sample · " : "Issued "}
         <time dateTime={stamp.issuedAt}>{formatDate(stamp.issuedAt)}</time>

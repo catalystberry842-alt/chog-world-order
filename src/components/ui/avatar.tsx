@@ -4,7 +4,7 @@ const sizeClass = {
   lg: "h-20 w-20 text-2xl",
 } as const;
 
-/** Generated avatar: a soft gradient from a hue plus initials. No uploads in Phase 1. */
+/** Generated avatar: a flat colour from a hue plus initials. No uploads yet. */
 export function Avatar({
   name,
   hue,
@@ -26,9 +26,9 @@ export function Avatar({
   return (
     <span
       aria-hidden="true"
-      className={`inline-flex shrink-0 items-center justify-center rounded-2xl font-display font-semibold text-white ring-1 ring-white/15 ${sizeClass[size]} ${className}`}
+      className={`inline-flex shrink-0 items-center justify-center rounded-2xl font-semibold text-white ring-1 ring-white/15 ${sizeClass[size]} ${className}`}
       style={{
-        background: `linear-gradient(135deg, hsl(${hue} 80% 66%), hsl(${(hue + 40) % 360} 70% 45%))`,
+        background: `hsl(${hue} 45% 42%)`,
       }}
     >
       {initials}

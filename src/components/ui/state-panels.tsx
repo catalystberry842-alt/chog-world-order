@@ -18,7 +18,7 @@ export function EmptyState({
     >
       <ChogIllustration mood="sleepy" className={compact ? "h-16 w-auto" : "h-24 w-auto"} />
       <div className="flex max-w-md flex-col gap-1.5">
-        <h3 className="font-display text-lg font-semibold">{title}</h3>
+        <h3 className="text-lg font-semibold">{title}</h3>
         <p className="text-sm leading-relaxed text-white/65">{description}</p>
       </div>
       {action}
@@ -43,7 +43,7 @@ export function ErrorState({
     >
       <ChogIllustration mood="puzzled" className="h-20 w-auto" />
       <div className="flex max-w-md flex-col gap-1.5">
-        <h3 className="font-display text-lg font-semibold">{title}</h3>
+        <h3 className="text-lg font-semibold">{title}</h3>
         <p className="text-sm leading-relaxed text-white/70">{description}</p>
       </div>
       {action}

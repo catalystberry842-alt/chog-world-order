@@ -72,7 +72,7 @@ async function CampaignDetail({ params }: Pick<PageProps<"/collabs/[id]">, "para
             <Badge tone="purple">{campaignCategoryLabels[campaign.category]}</Badge>
             <Badge>Posted {formatDate(campaign.postedOn)}</Badge>
           </div>
-          <h1 className="font-display text-3xl leading-tight font-semibold tracking-tight text-balance md:text-5xl">
+          <h1 className="text-3xl leading-tight font-semibold tracking-tight text-balance md:text-5xl">
             {campaign.title}
           </h1>
           <p className="text-lg leading-relaxed text-white/70">{campaign.summary}</p>
@@ -85,7 +85,7 @@ async function CampaignDetail({ params }: Pick<PageProps<"/collabs/[id]">, "para
           {facts.map((fact) => (
             <div key={fact.label} className="glass rounded-2xl px-4 py-3">
               <dt className="text-xs text-white/50">{fact.label}</dt>
-              <dd className="mt-0.5 font-display text-lg font-semibold">{fact.value}</dd>
+              <dd className="mt-0.5 text-lg font-semibold">{fact.value}</dd>
             </div>
           ))}
         </dl>
@@ -96,7 +96,7 @@ async function CampaignDetail({ params }: Pick<PageProps<"/collabs/[id]">, "para
         </SampleDataNotice>
 
         <section aria-labelledby="about-heading" className="flex flex-col gap-3">
-          <h2 id="about-heading" className="font-display text-xl font-semibold">
+          <h2 id="about-heading" className="text-xl font-semibold">
             About the campaign
           </h2>
           {campaign.description.map((paragraph) => (
@@ -108,7 +108,7 @@ async function CampaignDetail({ params }: Pick<PageProps<"/collabs/[id]">, "para
 
         <div className="grid gap-4 md:grid-cols-2">
           <section aria-labelledby="deliverables-heading" className="glass rounded-3xl p-5">
-            <h2 id="deliverables-heading" className="font-display text-lg font-semibold">
+            <h2 id="deliverables-heading" className="text-lg font-semibold">
               Deliverables
             </h2>
             <ul className="mt-3 flex flex-col gap-2.5">
@@ -121,7 +121,7 @@ async function CampaignDetail({ params }: Pick<PageProps<"/collabs/[id]">, "para
             </ul>
           </section>
           <section aria-labelledby="requirements-heading" className="glass rounded-3xl p-5">
-            <h2 id="requirements-heading" className="font-display text-lg font-semibold">
+            <h2 id="requirements-heading" className="text-lg font-semibold">
               Requirements
             </h2>
             <ul className="mt-3 flex flex-col gap-2.5">
@@ -138,7 +138,7 @@ async function CampaignDetail({ params }: Pick<PageProps<"/collabs/[id]">, "para
         </div>
 
         <section aria-labelledby="process-heading" className="flex flex-col gap-4">
-          <h2 id="process-heading" className="font-display text-xl font-semibold">
+          <h2 id="process-heading" className="text-xl font-semibold">
             How payment works
           </h2>
           <ol className="grid gap-3 sm:grid-cols-4">
@@ -149,7 +149,7 @@ async function CampaignDetail({ params }: Pick<PageProps<"/collabs/[id]">, "para
               ["Get paid", "Accepted work is paid in " + budget.token + "."],
             ].map(([title, copy], index) => (
               <li key={title} className="rounded-2xl bg-white/[0.03] p-4 ring-1 ring-white/[0.06]">
-                <span className="font-hand text-2xl text-blush-300">{index + 1}</span>
+                <span className="text-sm font-semibold text-blush-300 tabular-nums">0{index + 1}</span>
                 <h3 className="font-medium">{title}</h3>
                 <p className="mt-1 text-sm text-white/55">{copy}</p>
               </li>

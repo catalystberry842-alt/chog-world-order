@@ -43,11 +43,11 @@ export default async function LeaderboardPage() {
                     contributor.rank === 1 ? "sm:-translate-y-2 sm:border-crayon-yellow/30" : ""
                   }`}
                 >
-                  <span className="font-hand text-3xl text-white/60">#{contributor.rank}</span>
+                  <span className="text-sm font-semibold text-white/60 tabular-nums">#{contributor.rank}</span>
                   <Avatar name={contributor.profile.displayName ?? ""} hue={contributor.profile.avatarHue} size="lg" />
-                  <span className="font-display text-lg font-semibold">{contributor.profile.displayName}</span>
+                  <span className="text-lg font-semibold">{contributor.profile.displayName}</span>
                   <span className="text-xs text-white/50">{contributor.profile.skills.slice(0, 2).join(" · ")}</span>
-                  <span className="font-display text-3xl font-semibold">{formatNumber(contributor.reputation.total)}</span>
+                  <span className="text-3xl font-semibold">{formatNumber(contributor.reputation.total)}</span>
                 </Link>
               </li>
             ))}

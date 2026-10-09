@@ -121,7 +121,7 @@ export function PassportStamp({ stamp, issuedAt, size = "md", showLabel = true }
       </svg>
       {showLabel && (
         <figcaption className="flex flex-col items-center gap-0.5">
-          <span className="font-hand text-lg leading-none">{stamp.name}</span>
+          <span className="text-sm leading-tight font-semibold">{stamp.name}</span>
           <span className="text-[11px] tracking-wide uppercase opacity-70">
             {awardedLabel ?? "Locked"}
           </span>

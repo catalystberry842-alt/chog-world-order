@@ -98,7 +98,7 @@ async function Profile({ params }: Pick<PageProps<"/profile/[address]">, "params
       <div className="flex flex-col gap-6">
         <header className="glass flex flex-col gap-2 rounded-[2rem] p-6 sm:p-8">
           <p className="text-xs font-semibold tracking-[0.2em] text-blush-300 uppercase">Public profile</p>
-          <h1 className="font-display text-3xl font-semibold">{shortAddress(address)}</h1>
+          <h1 className="text-3xl font-semibold">{shortAddress(address)}</h1>
           <p className="font-mono text-sm break-all text-white/55">{address}</p>
         </header>
         <EmptyState

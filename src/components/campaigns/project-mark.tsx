@@ -5,10 +5,10 @@ export function ProjectMark({ project, size = "md" }: { project: CampaignProject
   return (
     <span
       aria-hidden="true"
-      className={`inline-flex shrink-0 items-center justify-center font-display font-semibold text-white ring-1 ring-white/15 ${
+      className={`inline-flex shrink-0 items-center justify-center font-semibold text-white ring-1 ring-white/15 ${
         size === "lg" ? "h-14 w-14 rounded-2xl text-2xl" : "h-10 w-10 rounded-xl text-base"
       }`}
-      style={{ background: `linear-gradient(135deg, hsl(${project.hue} 70% 55%), hsl(${project.hue} 60% 32%))` }}
+      style={{ background: `hsl(${project.hue} 45% 38%)` }}
     >
       {project.name[0]}
     </span>

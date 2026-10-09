@@ -230,7 +230,7 @@ export function ApplicationPanel({ campaign }: { campaign: Campaign }) {
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="glass flex flex-col gap-4 rounded-3xl p-5 sm:p-6" aria-label={title}>
-      <h2 className="font-display text-xl font-semibold">{title}</h2>
+      <h2 className="text-xl font-semibold">{title}</h2>
       {children}
     </section>
   );

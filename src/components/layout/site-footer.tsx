@@ -6,7 +6,7 @@ export function SiteFooter() {
     <footer className="mt-auto border-t border-white/[0.06]">
       <div className="mx-auto grid w-full max-w-6xl gap-8 px-4 py-10 sm:px-6 md:grid-cols-[1.5fr_1fr]">
         <div className="flex max-w-md flex-col gap-3">
-          <p className="font-display text-lg font-semibold">{site.name}</p>
+          <p className="text-lg font-semibold">{site.name}</p>
           <p className="text-sm leading-relaxed text-white/55">{site.description}</p>
           <p className="text-xs leading-relaxed text-white/40">
             Phase 1 preview. Campaigns, contributors, stamps, and scores shown here are sample data. Nothing is

@@ -12,19 +12,19 @@ const pillars = [
     title: "Chog Passport",
     href: "/passport",
     copy: "One wallet, one public record. Illustrated stamps, reviewed activity, and contribution history. Minting an NFT is optional, never required.",
-    accent: "from-monad-500/30",
+    accent: "text-monad-300",
   },
   {
     title: "Contribution Reputation",
     href: "/leaderboard",
     copy: "A transparent score built from useful work across Monad. Every point traces back to a contribution, a stamp, or a completed collab.",
-    accent: "from-blush-400/25",
+    accent: "text-blush-300",
   },
   {
     title: "Collab Board",
     href: "/collabs",
     copy: "Projects post paid campaigns. Creators apply with their passport, deliver the work, and get paid when it's accepted.",
-    accent: "from-crayon-mint/20",
+    accent: "text-crayon-mint",
   },
 ];
 
@@ -51,7 +51,7 @@ export default async function HomePage() {
             <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-blush-400" />
             Built for the Monad ecosystem
           </p>
-          <h1 className="font-display text-5xl leading-[0.98] font-semibold tracking-tight text-balance sm:text-6xl lg:text-7xl">
+          <h1 className="text-5xl leading-[0.98] font-semibold tracking-tight text-balance sm:text-6xl lg:text-7xl">
             Your work, <span className="crayon-underline text-monad-300">stamped</span> and paid.
           </h1>
           <p className="max-w-xl text-lg leading-relaxed text-white/70">
@@ -70,11 +70,10 @@ export default async function HomePage() {
         </div>
 
         <div className="relative mx-auto w-full max-w-md">
-          <div aria-hidden="true" className="absolute inset-0 -z-10 rounded-full bg-monad-500/25 blur-3xl" />
           <div className="paper relative rotate-[-2deg] rounded-[2rem] p-6 shadow-[0_40px_80px_-30px_rgba(0,0,0,0.8)]">
             <div className="flex items-start justify-between">
               <div>
-                <p className="font-hand text-2xl leading-none">Chog Passport</p>
+                <p className="text-lg leading-none font-semibold">Chog Passport</p>
                 <p className="mt-1 text-xs tracking-widest text-ink/50 uppercase">Monad · Contributor</p>
               </div>
               <span className="rounded-full bg-ink px-2.5 py-1 text-[10px] font-semibold tracking-wide text-paper uppercase">
@@ -95,7 +94,7 @@ export default async function HomePage() {
       <section aria-labelledby="pillars-heading" className="flex flex-col gap-8">
         <div className="flex max-w-2xl flex-col gap-3">
           <p className="text-xs font-semibold tracking-[0.2em] text-blush-300 uppercase">Three parts, one record</p>
-          <h2 id="pillars-heading" className="font-display text-3xl font-semibold tracking-tight md:text-4xl">
+          <h2 id="pillars-heading" className="text-3xl font-semibold tracking-tight md:text-4xl">
             Identity, reputation, and paid work in one place
           </h2>
         </div>
@@ -104,10 +103,10 @@ export default async function HomePage() {
             <li key={pillar.title}>
               <Link
                 href={pillar.href}
-                className={`glass group flex h-full flex-col gap-4 rounded-3xl bg-gradient-to-b ${pillar.accent} to-transparent p-6 transition hover:-translate-y-0.5 hover:border-white/20 motion-reduce:transition-none`}
+                className={`glass group flex h-full flex-col gap-4 rounded-3xl p-6 transition hover:-translate-y-0.5 hover:border-white/20 motion-reduce:transition-none`}
               >
-                <span className="font-hand text-3xl text-white/50">0{index + 1}</span>
-                <h3 className="font-display text-2xl font-semibold">{pillar.title}</h3>
+                <span className={`text-sm font-semibold tabular-nums ${pillar.accent}`}>0{index + 1}</span>
+                <h3 className="text-2xl font-semibold">{pillar.title}</h3>
                 <p className="leading-relaxed text-white/65">{pillar.copy}</p>
                 <span className="mt-auto text-sm font-medium text-monad-300 group-hover:text-monad-200">
                   Explore →
@@ -121,8 +120,8 @@ export default async function HomePage() {
       {/* Journey */}
       <section aria-labelledby="journey-heading" className="paper rounded-[2rem] p-6 sm:p-10">
         <div className="flex flex-col gap-2">
-          <p className="font-hand text-2xl text-ink/70">The loop</p>
-          <h2 id="journey-heading" className="font-display text-3xl font-semibold tracking-tight md:text-4xl">
+          <p className="text-xs font-semibold tracking-[0.2em] text-ink/60 uppercase">The loop</p>
+          <h2 id="journey-heading" className="text-3xl font-semibold tracking-tight md:text-4xl">
             From first contribution to first paycheck
           </h2>
         </div>
@@ -130,12 +129,12 @@ export default async function HomePage() {
           {journey.map((item, index) => (
             <li key={item.step} className="relative flex flex-col gap-2">
               <span
-                className="inline-flex h-11 w-11 items-center justify-center rounded-full border-2 border-ink font-display font-semibold"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full border-2 border-ink font-semibold"
                 style={{ background: ["#bfb2fd", "#ffb3dc", "#7fe0b8", "#ffd166", "#7cc6ff", "#ff9f68"][index] }}
               >
                 {index + 1}
               </span>
-              <h3 className="font-display text-lg font-semibold">{item.step}</h3>
+              <h3 className="text-lg font-semibold">{item.step}</h3>
               <p className="text-sm leading-relaxed text-ink/70">{item.copy}</p>
             </li>
           ))}
@@ -169,14 +168,14 @@ export default async function HomePage() {
       {/* Principles */}
       <section className="glass grid gap-8 rounded-[2rem] p-6 sm:p-10 md:grid-cols-[1fr_1.2fr] md:items-center">
         <div className="flex flex-col gap-3">
-          <h2 className="font-display text-3xl font-semibold tracking-tight">Honest by design</h2>
+          <h2 className="text-3xl font-semibold tracking-tight">Honest by design</h2>
           <p className="leading-relaxed text-white/65">
             Reputation only works if people can check it. Every record shows exactly how it was verified.
           </p>
         </div>
         <ul className="grid gap-3 sm:grid-cols-2">
           {[
-            ["Visible status", "Self-reported, pending, peer reviewed, or verified on-chain. Always labelled."],
+            ["Visible status", "Pending, verified, rejected, or unavailable. Always labelled, with the reason."],
             ["Open formula", "Scores are a plain sum you can recompute by hand."],
             ["NFTs optional", "Stamps are records first. Minting is a choice, not a gate."],
             ["Your keys stay yours", "We never ask for seed phrases or private keys."],

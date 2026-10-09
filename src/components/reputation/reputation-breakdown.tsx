@@ -46,14 +46,14 @@ export function ReputationBreakdownCard({
           <h3 id="reputation-heading" className="text-sm font-medium text-white/60">
             Reputation score
           </h3>
-          <p className="font-display text-5xl font-semibold tracking-tight">{formatNumber(reputation.total)}</p>
+          <p className="text-5xl font-semibold tracking-tight">{formatNumber(reputation.total)}</p>
           <p className="mt-1 text-xs text-white/50">
             {verifiedCount} verified {verifiedCount === 1 ? "contribution" : "contributions"}
           </p>
         </div>
         <span className="rounded-2xl bg-monad-500/15 px-3 py-2 text-center text-xs text-monad-200 ring-1 ring-monad-400/30">
           Rank
-          <span className="block font-display text-xl font-semibold text-white">{rank ? `#${rank}` : "—"}</span>
+          <span className="block text-xl font-semibold text-white">{rank ? `#${rank}` : "—"}</span>
         </span>
       </div>
       <ReputationBar reputation={reputation} />

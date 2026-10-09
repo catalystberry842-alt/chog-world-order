@@ -15,7 +15,7 @@ export function PageHeader({
     <header className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
       <div className="flex max-w-2xl flex-col gap-3">
         <p className="text-xs font-semibold tracking-[0.2em] text-blush-300 uppercase">{eyebrow}</p>
-        <h1 className="font-display text-4xl leading-[1.05] font-semibold tracking-tight text-balance md:text-5xl">
+        <h1 className="text-4xl leading-[1.05] font-semibold tracking-tight text-balance md:text-5xl">
           {title}
         </h1>
         {description && <p className="text-base leading-relaxed text-white/70 md:text-lg">{description}</p>}
@@ -40,7 +40,7 @@ export function SectionHeading({
   return (
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div className="flex flex-col gap-1">
-        <h2 id={id} className="font-display text-xl font-semibold tracking-tight md:text-2xl">
+        <h2 id={id} className="text-xl font-semibold tracking-tight md:text-2xl">
           {title}
         </h2>
         {description && <p className="text-sm text-white/60">{description}</p>}

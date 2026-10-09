@@ -7,8 +7,8 @@ export default function NotFound() {
     <PageContainer className="items-center text-center">
       <ChogIllustration mood="puzzled" className="h-40 w-auto" />
       <div className="flex max-w-md flex-col gap-3">
-        <p className="font-hand text-3xl text-blush-300">404</p>
-        <h1 className="font-display text-3xl font-semibold">This page wandered off</h1>
+        <p className="text-sm font-semibold tracking-[0.2em] text-blush-300 uppercase">Error 404</p>
+        <h1 className="text-3xl font-semibold">This page wandered off</h1>
         <p className="text-white/65">The link might be old, or the page never existed.</p>
       </div>
       <div className="flex flex-wrap justify-center gap-3">

@@ -26,7 +26,7 @@ export function CampaignCard({ campaign }: { campaign: Campaign }) {
       </header>
 
       <div className="flex flex-col gap-2">
-        <h3 className="font-display text-lg leading-snug font-semibold">
+        <h3 className="text-lg leading-snug font-semibold">
           <Link href={`/collabs/${campaign.id}`} className="after:absolute after:inset-0 after:rounded-3xl">
             {campaign.title}
           </Link>
@@ -38,7 +38,7 @@ export function CampaignCard({ campaign }: { campaign: Campaign }) {
         <div className="flex items-end justify-between gap-3 rounded-2xl bg-night-950/40 px-4 py-3 ring-1 ring-white/[0.06]">
           <div>
             <p className="text-xs text-white/50">{budget.model === "pool" ? "Prize pool" : "Per creator"}</p>
-            <p className="font-display text-xl font-semibold">
+            <p className="text-xl font-semibold">
               {formatTokenAmount(budget.model === "pool" ? budget.total : (budget.perCreator ?? budget.total), budget.token)}
             </p>
           </div>
@@ -58,7 +58,7 @@ export function CampaignCard({ campaign }: { campaign: Campaign }) {
             <span>{campaign.applicants} applicants</span>
           </div>
           <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]" aria-hidden="true">
-            <div className="h-full rounded-full bg-gradient-to-r from-monad-500 to-blush-400" style={{ width: `${fill}%` }} />
+            <div className="h-full rounded-full bg-monad-400" style={{ width: `${fill}%` }} />
           </div>
         </div>
 

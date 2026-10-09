@@ -88,7 +88,7 @@ export function EvidenceClaimForm({
   return (
     <section aria-labelledby={`${id}-title`} className="glass flex flex-col gap-5 rounded-[2rem] p-6 sm:p-8">
       <div className="flex flex-col gap-1">
-        <h2 id={`${id}-title`} className="font-display text-2xl font-semibold">
+        <h2 id={`${id}-title`} className="text-2xl font-semibold">
           Submit evidence
         </h2>
         <p className="text-sm text-white/60">

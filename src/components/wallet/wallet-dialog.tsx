@@ -35,7 +35,7 @@ export function WalletDialog({ open, onClose }: { open: boolean; onClose: () => 
         if (event.target === dialogRef.current) onClose();
       }}
       aria-labelledby="wallet-dialog-title"
-      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-3xl border border-white/10 bg-night-900 p-0 text-white shadow-2xl backdrop:bg-night-950/70 backdrop:backdrop-blur-sm"
+      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-3xl border border-white/10 bg-night-900 p-0 text-white shadow-2xl backdrop:bg-night-950/70"
     >
       {open && <WalletDialogBody onClose={onClose} />}
     </dialog>
@@ -49,7 +49,7 @@ function WalletDialogBody({ onClose }: { onClose: () => void }) {
     <div className="flex flex-col gap-5 p-6">
       <div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h2 id="wallet-dialog-title" className="font-display text-xl font-semibold">
+          <h2 id="wallet-dialog-title" className="text-xl font-semibold">
             {status === "connected" ? "Your wallet" : "Connect a wallet"}
           </h2>
           <p className="text-sm text-white/60">
