@@ -1,36 +1,43 @@
 import type { Metadata } from "next";
-import { PageFrame } from "@/components/page-frame";
-import { sampleBriefs } from "@/lib/placeholders";
+import { CampaignBrowser } from "@/components/campaigns/campaign-browser";
+import { PageContainer, PageHeader } from "@/components/ui/page-header";
+import { SampleDataBadge } from "@/components/ui/sample-data-badge";
+import { getCampaigns } from "@/lib/data";
+import { formatNumber } from "@/lib/format";
 
 export const metadata: Metadata = {
-  title: "Collabs",
-  description: "Placeholder board for paid Monad collaborations.",
+  title: "Collab Board",
+  description: "Discover paid campaigns from Monad projects and apply with your Chog Passport.",
 };
 
-export default function CollabsPage() {
+export default async function CollabsPage() {
+  const campaigns = await getCampaigns();
+  const open = campaigns.filter((campaign) => campaign.status === "open");
+  const openBudget = open.reduce((sum, campaign) => sum + campaign.budget.total, 0);
+
   return (
-    <PageFrame
-      kicker="Paid collaborations"
-      title="Work with a price on it."
-      summary="Collabs will match a brief with a contributor. These cards are sample copy only. Nothing is funded, escrowed, or assigned."
-    >
-      <ul className="grid gap-4 md:grid-cols-3">
-        {sampleBriefs.map((brief) => (
-          <li key={brief.title} className="stamp-card flex flex-col gap-3 p-5">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs font-semibold tracking-widest text-crayon uppercase">
-                {brief.craft}
-              </span>
-              <span className="rounded-full bg-pink px-3 py-1 text-xs font-semibold text-ink">
-                {brief.status}
-              </span>
+    <PageContainer>
+      <PageHeader
+        eyebrow="Collab Board"
+        title="Paid work from projects building on Monad"
+        description="Find a campaign that fits your skills, apply with your passport, and get paid when your work is accepted."
+        badges={<SampleDataBadge label="Sample campaigns · not funded" />}
+        actions={
+          <dl className="grid grid-cols-2 gap-3">
+            <div className="glass rounded-2xl px-4 py-3">
+              <dt className="text-xs text-white/55">Open campaigns</dt>
+              <dd className="font-display text-2xl font-semibold">{open.length}</dd>
             </div>
-            <h2 className="text-xl font-semibold leading-tight">{brief.title}</h2>
-            <p className="leading-relaxed text-ink/80">{brief.note}</p>
-            <p className="text-sm font-semibold text-ink/70">Sample brief · not funded</p>
-          </li>
-        ))}
-      </ul>
-    </PageFrame>
+            <div className="glass rounded-2xl px-4 py-3">
+              <dt className="text-xs text-white/55">Open budget</dt>
+              <dd className="font-display text-2xl font-semibold">
+                {formatNumber(openBudget)} <span className="text-sm text-white/55">USDC</span>
+              </dd>
+            </div>
+          </dl>
+        }
+      />
+      <CampaignBrowser campaigns={campaigns} />
+    </PageContainer>
   );
 }
