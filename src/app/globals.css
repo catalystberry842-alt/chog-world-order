@@ -1,100 +1,221 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens.
+ * Night surfaces carry the Monad-purple identity; "paper" surfaces carry the
+ * crayon artwork (passport pages, stamps, illustrations).
+ */
 :root {
-  --paper: #fff6ee;
-  --card: #fffdfb;
+  --night-950: #0a0614;
+  --night-900: #110a22;
+  --night-800: #1a1131;
+  --night-700: #251943;
+  --monad-200: #d9d1ff;
+  --monad-300: #bfb2fd;
+  --monad-400: #9f8cfb;
+  --monad-500: #836ef9;
+  --monad-600: #6a51ef;
+  --monad-700: #5236c9;
+  --blush-300: #ffb3dc;
+  --blush-400: #ff86c8;
+  --blush-500: #f45fae;
+  --paper: #fff6ea;
+  --paper-deep: #f6e7d3;
   --ink: #2a1236;
-  --crayon: #5e268f;
-  --pink: #ff7ab8;
+  --crayon-yellow: #ffd166;
+  --crayon-mint: #7fe0b8;
+  --crayon-sky: #7cc6ff;
+  --crayon-orange: #ff9f68;
 }
 
 @theme inline {
+  --color-night-950: var(--night-950);
+  --color-night-900: var(--night-900);
+  --color-night-800: var(--night-800);
+  --color-night-700: var(--night-700);
+  --color-monad-200: var(--monad-200);
+  --color-monad-300: var(--monad-300);
+  --color-monad-400: var(--monad-400);
+  --color-monad-500: var(--monad-500);
+  --color-monad-600: var(--monad-600);
+  --color-monad-700: var(--monad-700);
+  --color-blush-300: var(--blush-300);
+  --color-blush-400: var(--blush-400);
+  --color-blush-500: var(--blush-500);
   --color-paper: var(--paper);
-  --color-card: var(--card);
+  --color-paper-deep: var(--paper-deep);
   --color-ink: var(--ink);
-  --color-crayon: var(--crayon);
-  --color-pink: var(--pink);
-  --font-sans: var(--font-fredoka), sans-serif;
+  --color-crayon-yellow: var(--crayon-yellow);
+  --color-crayon-mint: var(--crayon-mint);
+  --color-crayon-sky: var(--crayon-sky);
+  --color-crayon-orange: var(--crayon-orange);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-fredoka), var(--font-inter), sans-serif;
+  --font-hand: var(--font-caveat), cursive;
 }
 
 @layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--night-950);
+    background-image:
+      radial-gradient(60rem 40rem at 10% -10%, rgb(131 110 249 / 0.22), transparent 60%),
+      radial-gradient(50rem 30rem at 95% 0%, rgb(255 134 200 / 0.12), transparent 60%);
+    background-repeat: no-repeat;
+    color: #f3efff;
+  }
+
   button:not(:disabled),
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
 
-  body {
-    background: var(--paper);
-    color: var(--ink);
-    font-family: var(--font-fredoka), sans-serif;
-  }
-
   :focus-visible {
-    outline: 3px solid var(--crayon);
+    outline: 2px solid var(--blush-400);
     outline-offset: 3px;
   }
+
+  ::selection {
+    background: rgb(255 134 200 / 0.4);
+  }
 }
 
-.mark {
-  background-image: linear-gradient(
-    transparent 58%,
-    var(--pink) 58%,
-    var(--pink) 88%,
-    transparent 88%
-  );
+@layer components {
+  /* Restrained glass surface used for most cards on night backgrounds. */
+  .glass {
+    border: 1px solid rgb(255 255 255 / 0.09);
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.06), rgb(255 255 255 / 0.025));
+    backdrop-filter: blur(12px);
+    box-shadow: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 20px 40px -24px rgb(0 0 0 / 0.6);
+  }
+
+  /* Cream paper surface for passport pages and crayon art. */
+  .paper {
+    background-color: var(--paper);
+    background-image:
+      radial-gradient(circle at 20% 30%, rgb(42 18 54 / 0.035) 0 1px, transparent 1.5px),
+      radial-gradient(circle at 70% 80%, rgb(42 18 54 / 0.03) 0 1px, transparent 1.5px);
+    background-size: 14px 14px, 22px 22px;
+    color: var(--ink);
+  }
+
+  /* Hand-drawn wobbly highlight under a word. */
+  .crayon-underline {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 20' preserveAspectRatio='none'%3E%3Cpath d='M2 14 C40 6 80 16 120 9 S180 12 198 7' fill='none' stroke='%23ff86c8' stroke-width='6' stroke-linecap='round' opacity='.85'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-size: 100% 0.45em;
+    background-position: 0 100%;
+    padding-bottom: 0.08em;
+  }
+
+  .btn {
+    display: inline-flex;
+    min-height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 999px;
+    padding: 0.5rem 1.25rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition:
+      transform 150ms ease,
+      background-color 150ms ease,
+      border-color 150ms ease,
+      opacity 150ms ease;
+  }
+
+  .btn:not(:disabled):hover {
+    transform: translateY(-1px);
+  }
+
+  .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--monad-500), var(--monad-600));
+    color: white;
+    box-shadow: 0 8px 24px -10px rgb(131 110 249 / 0.8);
+  }
+
+  .btn-primary:not(:disabled):hover {
+    background: linear-gradient(135deg, var(--monad-400), var(--monad-500));
+  }
+
+  .btn-accent {
+    background: var(--blush-400);
+    color: var(--ink);
+  }
+
+  .btn-ghost {
+    border: 1px solid rgb(255 255 255 / 0.14);
+    background: rgb(255 255 255 / 0.04);
+    color: #f3efff;
+  }
+
+  .btn-ghost:not(:disabled):hover {
+    border-color: rgb(255 255 255 / 0.28);
+    background: rgb(255 255 255 / 0.08);
+  }
+
+  .btn-sm {
+    min-height: 2.25rem;
+    padding: 0.25rem 0.9rem;
+    font-size: 0.875rem;
+  }
+
+  .field {
+    width: 100%;
+    min-height: 2.75rem;
+    border-radius: 0.875rem;
+    border: 1px solid rgb(255 255 255 / 0.12);
+    background: rgb(10 6 20 / 0.6);
+    padding: 0.625rem 0.875rem;
+    color: #f3efff;
+    font-size: 0.9375rem;
+  }
+
+  .field::placeholder {
+    color: rgb(243 239 255 / 0.4);
+  }
+
+  .field:focus {
+    border-color: var(--monad-400);
+    outline: none;
+    box-shadow: 0 0 0 3px rgb(131 110 249 / 0.25);
+  }
+
+  .skeleton {
+    border-radius: 0.75rem;
+    background: linear-gradient(90deg, rgb(255 255 255 / 0.05), rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.05));
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
 }
 
-.stamp-card {
-  border: 3px solid var(--ink);
-  border-radius: 1.5rem 1.1rem 1.45rem 1.15rem;
-  background: var(--card);
-  box-shadow: 6px 6px 0 var(--crayon);
-}
-
-.lined {
-  background-color: var(--card);
-  background-image: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent 31px,
-    color-mix(in srgb, var(--pink) 45%, var(--paper)) 32px
-  );
-  background-position: 0 0.7rem;
-  box-shadow: inset 8px 0 0 var(--pink);
-}
-
-.btn {
-  display: inline-flex;
-  min-height: 3rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  border: 3px solid var(--ink);
-  padding: 0.5rem 1.25rem;
-  font-weight: 600;
-  transition: transform 160ms ease;
-}
-
-.btn:hover {
-  transform: translateY(-1px);
-}
-
-.btn-primary {
-  background: var(--crayon);
-  color: var(--paper);
-}
-
-.btn-secondary {
-  background: var(--card);
-  color: var(--ink);
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn {
+  .btn,
+  .btn:not(:disabled):hover {
+    transform: none;
     transition: none;
   }
 
-  .btn:hover {
-    transform: none;
+  .skeleton {
+    animation: none;
   }
 }

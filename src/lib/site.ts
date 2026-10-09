@@ -1,7 +1,8 @@
 export const site = {
   name: "Chog World Order",
+  tagline: "Contribute. Get verified. Get hired. Get paid.",
   description:
-    "A contribution economy for the Monad ecosystem, combining Chog Passport, contributor reputation, and paid collaborations.",
+    "Passports, contribution reputation, and paid collaborations for people building in the Monad ecosystem.",
 } as const;
 
 export const nav = [
@@ -9,8 +10,3 @@ export const nav = [
   { href: "/collabs", label: "Collabs" },
   { href: "/leaderboard", label: "Leaderboard" },
 ] as const;
-
-export function shortAddress(address: string) {
-  if (address.length <= 12) return address;
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}

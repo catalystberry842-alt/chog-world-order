@@ -1,50 +1,91 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { PageFrame } from "@/components/page-frame";
-import { passportFields, sampleContributors } from "@/lib/placeholders";
-import { shortAddress } from "@/lib/site";
+import { ContributionHistory } from "@/components/passport/contribution-history";
+import { PassportCover } from "@/components/passport/passport-cover";
+import { PassportWalletPanel } from "@/components/passport/passport-wallet-panel";
+import { ReputationPreview } from "@/components/passport/reputation-preview";
+import { StampCollection } from "@/components/passport/stamp-collection";
+import { PageContainer, PageHeader, SectionHeading } from "@/components/ui/page-header";
+import { SampleDataBadge, SampleDataNotice } from "@/components/ui/sample-data-badge";
+import {
+  getContributions,
+  getEarnedStamps,
+  getRankedContributor,
+  getSamplePassportAddress,
+  getStampCatalogue,
+} from "@/lib/data";
 
 export const metadata: Metadata = {
   title: "Passport",
-  description: "Placeholder for the Chog Passport, a public contributor record.",
+  description: "Your Chog Passport: wallet-based identity, crayon stamps, reputation, and contribution history.",
 };
 
-export default function PassportPage() {
-  const sample = sampleContributors[0];
+export default async function PassportPage() {
+  const sampleAddress = await getSamplePassportAddress();
+  const [sample, catalogue, earned, contributions] = await Promise.all([
+    getRankedContributor(sampleAddress),
+    getStampCatalogue(),
+    getEarnedStamps(sampleAddress),
+    getContributions(sampleAddress),
+  ]);
 
   return (
-    <PageFrame
-      kicker="Chog Passport"
-      title="A cover, not a login."
-      summary="The passport will be a public sheet for a wallet address: who they are in the order, what they shipped, and which collabs they finished."
-    >
-      <div className="grid gap-4 md:grid-cols-2">
-        <section className="stamp-card p-5">
-          <h2 className="text-xl font-semibold">Sheet fields</h2>
-          <ul className="mt-4 grid gap-3">
-            {passportFields.map((field) => (
-              <li
-                key={field}
-                className="flex items-center justify-between gap-4 border-b border-pink/50 pb-3 text-sm last:border-b-0 last:pb-0"
-              >
-                <span className="font-semibold">{field}</span>
-                <span className="text-ink/70">Not issued</span>
-              </li>
-            ))}
-          </ul>
+    <PageContainer>
+      <PageHeader
+        eyebrow="Chog Passport"
+        title="A passport for the work you do on Monad"
+        description="Stamps for what you've shipped, a score you can audit, and a history projects can check before they hire you."
+      />
+
+      <PassportWalletPanel />
+
+      {sample && (
+        <section aria-labelledby="sample-heading" className="flex flex-col gap-8">
+          <SectionHeading
+            id="sample-heading"
+            title="Sample passport"
+            description="What a well-used passport looks like."
+            action={<SampleDataBadge label="Sample data · not on-chain" />}
+          />
+          <SampleDataNotice>
+            Everything below is mock data for a fictional contributor. Statuses like “Peer reviewed” show how real
+            records will be labelled. No stamp here is minted and no contribution is verified on-chain.
+          </SampleDataNotice>
+
+          <PassportCover
+            contributor={sample}
+            actions={
+              <Link href={`/profile/${sample.address}`} className="btn btn-ghost btn-sm">
+                Public profile
+              </Link>
+            }
+          />
+
+          <section aria-labelledby="stamps-heading" className="flex flex-col gap-4">
+            <SectionHeading
+              id="stamps-heading"
+              title="Stamp collection"
+              description="Earned stamps are in colour. Locked stamps show how to earn them."
+            />
+            <StampCollection catalogue={catalogue} earned={earned} />
+          </section>
+
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+            <section aria-labelledby="history-heading" className="flex flex-col gap-4">
+              <SectionHeading
+                id="history-heading"
+                title="Contribution history"
+                description="Newest first, with the points each record earned."
+              />
+              <ContributionHistory contributions={contributions} />
+            </section>
+            <aside className="flex flex-col gap-4 lg:sticky lg:top-24">
+              <SectionHeading title="Reputation preview" />
+              <ReputationPreview score={sample.score} rank={sample.rank} />
+            </aside>
+          </div>
         </section>
-        <section className="stamp-card flex flex-col gap-4 p-5">
-          <h2 className="text-xl font-semibold">Sample cover</h2>
-          <p className="leading-relaxed text-ink/80">
-            {sample.name} is placeholder ink. Opening their profile shows the
-            shape of a future passport, not a live record.
-          </p>
-          <p className="font-semibold">{shortAddress(sample.address)}</p>
-          <Link className="btn btn-primary w-fit" href={`/profile/${sample.address}`}>
-            View sample profile
-          </Link>
-        </section>
-      </div>
-    </PageFrame>
+      )}
+    </PageContainer>
   );
 }
