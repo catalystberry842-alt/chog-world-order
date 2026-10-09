@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #fff6ee;
+  --card: #fffdfb;
+  --ink: #2a1236;
+  --crayon: #5e268f;
+  --pink: #ff7ab8;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-crayon: var(--crayon);
+  --color-pink: var(--pink);
+  --font-sans: var(--font-fredoka), sans-serif;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-fredoka), sans-serif;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--crayon);
+    outline-offset: 3px;
+  }
+}
+
+.mark {
+  background-image: linear-gradient(
+    transparent 58%,
+    var(--pink) 58%,
+    var(--pink) 88%,
+    transparent 88%
+  );
+}
+
+.stamp-card {
+  border: 3px solid var(--ink);
+  border-radius: 1.5rem 1.1rem 1.45rem 1.15rem;
+  background: var(--card);
+  box-shadow: 6px 6px 0 var(--crayon);
+}
+
+.lined {
+  background-color: var(--card);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 31px,
+    color-mix(in srgb, var(--pink) 45%, var(--paper)) 32px
+  );
+  background-position: 0 0.7rem;
+  box-shadow: inset 8px 0 0 var(--pink);
+}
+
+.btn {
+  display: inline-flex;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 3px solid var(--ink);
+  padding: 0.5rem 1.25rem;
+  font-weight: 600;
+  transition: transform 160ms ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn-primary {
+  background: var(--crayon);
+  color: var(--paper);
+}
+
+.btn-secondary {
+  background: var(--card);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn {
+    transition: none;
+  }
+
+  .btn:hover {
+    transform: none;
+  }
+}
