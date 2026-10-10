@@ -7,7 +7,7 @@ import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.so
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {CampaignPayments} from "../src/CampaignPayments.sol";
-import {FalseReturnERC20, FeeOnTransferERC20, HookERC20, MockERC20, NoReturnERC20} from "./mocks/Tokens.sol";
+import {ClawbackERC20, FalseReturnERC20, FeeOnTransferERC20, HookERC20, MockERC20, NoReturnERC20} from "./mocks/Tokens.sol";
 import {ReentrantCreator, ReentrantOwner, RejectingReceiver} from "./mocks/Actors.sol";
 
 contract CampaignPaymentsTest is Test {
@@ -266,7 +266,95 @@ contract CampaignPaymentsTest is Test {
         assertEq(fee.balanceOf(creator), 0, "whole payment reverted");
     }
 
-    // ------------------------------------------------------------------
+function test_payToken_rejectsTokenThatLowersCreatorBalance() public {
+        ClawbackERC20 claw = new ClawbackERC20();
+        vm.prank(admin);
+        payments.setSupportedToken(address(claw), true);
+        claw.mint(owner, 1_000);
+        claw.mint(creator, 5_000);
+        bytes32 id = _register();
+        vm.startPrank(owner);
+        claw.approve(address(payments), 1_000);
+        vm.expectRevert(abi.encodeWithSelector(CampaignPayments.TransferAmountMismatch.selector, 1_000, 0));
+        payments.payToken(id, address(claw), creator, 1_000, REF);
+        vm.stopPrank();
+    }
+
+    function test_payToken_rejectsSelfAndContractAsRecipient() public {
+        bytes32 id = _register();
+        vm.startPrank(owner);
+        usdc.approve(address(payments), 10e6);
+        vm.expectRevert(abi.encodeWithSelector(CampaignPayments.InvalidRecipient.selector, owner));
+        payments.payToken(id, address(usdc), owner, 1e6, REF);
+        vm.expectRevert(abi.encodeWithSelector(CampaignPayments.InvalidRecipient.selector, address(payments)));
+        payments.payToken(id, address(usdc), address(payments), 1e6, REF);
+        vm.stopPrank();
+    }
+
+    function test_payToken_rejectsUnregisteredCampaign() public {
+        bytes32 unknown = keccak256("never registered");
+        vm.startPrank(owner);
+        usdc.approve(address(payments), 1e6);
+        vm.expectRevert(abi.encodeWithSelector(CampaignPayments.CampaignNotRegistered.selector, unknown));
+        payments.payToken(unknown, address(usdc), creator, 1e6, REF);
+        vm.stopPrank();
+    }
+
+    function test_delistedToken_blocksTokenPaymentsButNotNative() public {
+        bytes32 id = _register();
+        vm.prank(admin);
+        payments.setSupportedToken(address(usdc), false);
+        vm.startPrank(owner);
+        usdc.approve(address(payments), 1e6);
+        vm.expectRevert(abi.encodeWithSelector(CampaignPayments.UnsupportedToken.selector, address(usdc)));
+        payments.payToken(id, address(usdc), creator, 1e6, REF);
+        payments.payNative{value: 1 ether}(id, creator, REF);
+        vm.stopPrank();
+        assertEq(creator.balance, 1 ether);
+    }
+
+    function test_deliverable_canBePaidOnlyOnce() public {
+        bytes32 id = _register();
+        vm.startPrank(owner);
+        payments.payNative{value: 1 ether}(id, creator, REF);
+        assertTrue(payments.deliverablePaid(id, REF));
+        vm.expectRevert(abi.encodeWithSelector(CampaignPayments.DeliverableAlreadyPaid.selector, id, REF));
+        payments.payNative{value: 1 ether}(id, creator, REF);
+        usdc.approve(address(payments), 1e6);
+        vm.expectRevert(abi.encodeWithSelector(CampaignPayments.DeliverableAlreadyPaid.selector, id, REF));
+        payments.payToken(id, address(usdc), creator, 1e6, REF);
+        // Another deliverable of the same campaign is unaffected.
+        payments.payNative{value: 1 ether}(id, creator, keccak256("chog:deliverable:dlv0002"));
+        vm.stopPrank();
+        assertEq(creator.balance, 2 ether);
+    }
+
+    function test_deliverable_failedTransferDoesNotMarkPaid() public {
+        bytes32 id = _register();
+        vm.startPrank(owner);
+        vm.expectRevert(); // no allowance
+        payments.payToken(id, address(usdc), creator, 1e6, REF);
+        assertFalse(payments.deliverablePaid(id, REF));
+        payments.payNative{value: 1 ether}(id, creator, REF);
+        vm.stopPrank();
+    }
+
+    function test_register_idDiffersPerChain() public {
+        bytes32 here = payments.computeCampaignId(owner, SALT);
+        vm.chainId(10143);
+        assertTrue(payments.computeCampaignId(owner, SALT) != here);
+    }
+
+    function test_admin_pendingOwnerHasNoPowerUntilAccepted() public {
+        vm.prank(admin);
+        payments.transferOwnership(stranger);
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        payments.setSupportedToken(address(usdc), false);
+        assertTrue(payments.isSupportedToken(address(usdc)));
+    }
+
+        // ------------------------------------------------------------------
     // Reentrancy
     // ------------------------------------------------------------------
 

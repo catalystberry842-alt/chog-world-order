@@ -196,14 +196,14 @@ submit (signed-in wallet) → handler.prepare (validate + canonicalise + dedupe 
   → verified → stamps + reputation issued in one transaction
 ```
 
-- **Duplicates.** Every claim gets a canonical `dedupeKey` (lowercased tx hash, or a URL without tracking parameters, `www.`, trailing slashes, or fragments). It is unique across all users, so the same evidence can never be claimed twice. Stamps are unique per `(user, category)` and `(evidence, category)`, and reputation events per `(evidence, kind)` and per stamp. Issuance is idempotent.
+- **Duplicates.** Every claim gets a canonical `dedupeKey`, unique across all users. Links are normalised (host case, `www.`, trailing dots, `twitter.com` → `x.com`, repeated slashes, escaped characters, tracking parameters in any case, fragments, PR-number leading zeros; short commit SHAs are refused) and keyed without the claimed kind, so one link earns once. On-chain keys include the claimant's wallet, because only a transaction's sender can verify it; a stranger's claim cannot block the sender. A rejected claim releases its key. Each wallet can have at most 20 claims waiting for review. Stamps are unique per `(user, category)` and `(evidence, category)`, and reputation events per `(evidence, kind)` and per stamp. Issuance is idempotent.
 - **Nothing is silently verified.** If a verification source is missing, the record is stored as `unavailable` with a reason.
 - **Reviewers** cannot review their own evidence, cannot approve on-chain or campaign evidence, and cannot choose point values. Reviewer notes are never returned by public APIs.
 - **Sessions.** The cookie holds a random token; only its SHA-256 hash is stored. Sessions expire after 7 days and are revoked on sign-out. SIWE nonces are single-use (unique in the database).
 
 ### Reputation
 
-Reputation is an append-only ledger (`ReputationEvent`). The engine (`src/lib/reputation/engine.ts`) is a pure function of a passport's verified evidence and the versioned rules in `src/lib/reputation/config.ts` (version `2026-10.1`):
+Reputation is an append-only ledger (`ReputationEvent`). The engine (`src/lib/reputation/engine.ts`) is a pure function of a passport's verified evidence and the versioned rules in `src/lib/reputation/config.ts` (version `2026-10.2`):
 
 | Verified work | Points | Daily cap | Monthly cap |
 | --- | --- | --- | --- |

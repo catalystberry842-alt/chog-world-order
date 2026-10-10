@@ -197,6 +197,9 @@ export class PrismaPassportStore implements PassportStore {
           occurredAt: input.occurredAt,
           statusReason: input.statusReason,
           verificationData: input.verificationData ?? Prisma.DbNull,
+          reviewerId: input.reviewerId ?? null,
+          reviewedAt: input.reviewedAt ?? null,
+          verifiedAt: input.verifiedAt ?? null,
         },
       });
       return mapEvidence(row);

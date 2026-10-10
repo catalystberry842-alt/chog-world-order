@@ -19,6 +19,7 @@ function registerCampaign(bytes32 salt) external returns (bytes32 campaignId);
 function payNative(bytes32 campaignId, address payable creator, bytes32 deliverableRef) external payable;
 function payToken(bytes32 campaignId, address token, address creator, uint256 amount, bytes32 deliverableRef) external;
 function setSupportedToken(address token, bool supported) external;           // admin only
+function deliverablePaid(bytes32 campaignId, bytes32 deliverableRef) external view returns (bool);
 function campaignOwner(bytes32 campaignId) external view returns (address);
 function isSupportedToken(address token) external view returns (bool);
 address public constant NATIVE_TOKEN = address(0);
@@ -42,7 +43,7 @@ event SupportedTokenUpdated(address indexed token, bool supported);
 
 ### Custom errors
 
-`ZeroSalt`, `CampaignAlreadyRegistered(bytes32)`, `CampaignNotRegistered(bytes32)`, `NotCampaignOwner(bytes32, address)`, `ZeroAddress`, `InvalidRecipient(address)`, `ZeroAmount`, `ZeroDeliverableRef`, `UnsupportedToken(address)`, `NotAContract(address)`, `NativeTransferFailed(address, uint256)`, `TransferAmountMismatch(uint256, uint256)`, `RenounceDisabled`.
+`ZeroSalt`, `CampaignAlreadyRegistered(bytes32)`, `CampaignNotRegistered(bytes32)`, `NotCampaignOwner(bytes32, address)`, `ZeroAddress`, `InvalidRecipient(address)`, `ZeroAmount`, `ZeroDeliverableRef`, `UnsupportedToken(address)`, `NotAContract(address)`, `DeliverableAlreadyPaid(bytes32, bytes32)`, `NativeTransferFailed(address, uint256)`, `TransferAmountMismatch(uint256, uint256)`, `RenounceDisabled`.
 
 ## Security decisions
 
@@ -61,6 +62,7 @@ event SupportedTokenUpdated(address indexed token, bool supported);
 
 ### Known limitations
 
+- Each `(campaignId, deliverableRef)` can be paid once (`DeliverableAlreadyPaid`). The flag is set before the transfer, and a failed transfer reverts it, so a resubmitted or duplicated wallet transaction cannot pay a creator twice.
 - The contract does not verify off-chain work, deliverable state, or that `deliverableRef` matches a real deliverable. The app verifies these before showing a payment as confirmed.
 - A campaign owner can pay any amount to any address under their campaign. The app compares events against the expected recipient and amount before marking a payment confirmed.
 - Tokens that can be paused or blocklisted can still make a payment revert; that is handled as a failed payment.

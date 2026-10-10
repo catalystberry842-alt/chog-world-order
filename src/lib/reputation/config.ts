@@ -28,7 +28,7 @@ export type ReputationConfig = {
 };
 
 export const reputationConfig: ReputationConfig = {
-  version: "2026-10.1",
+  version: "2026-10.2",
   weights: {
     campaign: 10,
     protocol: 3,

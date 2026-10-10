@@ -31,6 +31,10 @@ contract CampaignPayments is Ownable2Step, ReentrancyGuard {
     /// @notice ERC-20 tokens approved by the admin for campaign payments.
     mapping(address token => bool supported) public isSupportedToken;
 
+    /// @notice Whether a deliverable of a campaign has been paid. Each deliverable can be paid once,
+    /// so a resubmitted or duplicated transaction cannot pay the creator twice.
+    mapping(bytes32 campaignId => mapping(bytes32 deliverableRef => bool paid)) public deliverablePaid;
+
     /// @notice Emitted once when a campaign is registered.
     /// @param campaignId The derived campaign ID.
     /// @param owner The account that registered the campaign and may pay from it.
@@ -76,6 +80,8 @@ contract CampaignPayments is Ownable2Step, ReentrancyGuard {
     error UnsupportedToken(address token);
     /// @notice The address has no contract code, so it cannot be an ERC-20 token.
     error NotAContract(address token);
+    /// @notice This deliverable of this campaign has already been paid.
+    error DeliverableAlreadyPaid(bytes32 campaignId, bytes32 deliverableRef);
     /// @notice The native transfer to the creator failed.
     error NativeTransferFailed(address creator, uint256 amount);
     /// @notice The creator received a different amount than requested (e.g. a fee-on-transfer token).
@@ -111,9 +117,9 @@ contract CampaignPayments is Ownable2Step, ReentrancyGuard {
         payable
         nonReentrant
     {
-        _checkPayment(campaignId, creator, msg.value, deliverableRef);
+        _checkAndRecordPayment(campaignId, creator, msg.value, deliverableRef);
 
-        // Checks are done and no state changes; the only interaction is the transfer.
+        // Checks and the paid flag are done; the only interaction is the transfer.
         (bool ok,) = creator.call{value: msg.value}("");
         if (!ok) revert NativeTransferFailed(creator, msg.value);
 
@@ -135,13 +141,16 @@ contract CampaignPayments is Ownable2Step, ReentrancyGuard {
         uint256 amount,
         bytes32 deliverableRef
     ) external nonReentrant {
-        _checkPayment(campaignId, creator, amount, deliverableRef);
         if (!isSupportedToken[token]) revert UnsupportedToken(token);
+        _checkAndRecordPayment(campaignId, creator, amount, deliverableRef);
 
         IERC20 erc20 = IERC20(token);
         uint256 before = erc20.balanceOf(creator);
         erc20.safeTransferFrom(msg.sender, creator, amount);
-        uint256 received = erc20.balanceOf(creator) - before;
+        uint256 afterBalance = erc20.balanceOf(creator);
+        // A token that lowers the creator's balance during the transfer reports 0 received,
+        // instead of underflowing into a generic panic.
+        uint256 received = afterBalance > before ? afterBalance - before : 0;
         if (received != amount) revert TransferAmountMismatch(amount, received);
 
         emit CreatorPaid(campaignId, creator, token, amount, msg.sender, deliverableRef);
@@ -160,9 +169,10 @@ contract CampaignPayments is Ownable2Step, ReentrancyGuard {
         revert RenounceDisabled();
     }
 
-    function _checkPayment(bytes32 campaignId, address creator, uint256 amount, bytes32 deliverableRef)
+    /// @dev Validates a payment and marks the deliverable as paid before any transfer
+    /// (checks-effects-interactions). A failed transfer reverts the flag with everything else.
+    function _checkAndRecordPayment(bytes32 campaignId, address creator, uint256 amount, bytes32 deliverableRef)
         private
-        view
     {
         address owner_ = campaignOwner[campaignId];
         if (owner_ == address(0)) revert CampaignNotRegistered(campaignId);
@@ -171,5 +181,7 @@ contract CampaignPayments is Ownable2Step, ReentrancyGuard {
         if (creator == address(this) || creator == msg.sender) revert InvalidRecipient(creator);
         if (amount == 0) revert ZeroAmount();
         if (deliverableRef == bytes32(0)) revert ZeroDeliverableRef();
+        if (deliverablePaid[campaignId][deliverableRef]) revert DeliverableAlreadyPaid(campaignId, deliverableRef);
+        deliverablePaid[campaignId][deliverableRef] = true;
     }
 }

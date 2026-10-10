@@ -45,6 +45,10 @@ export async function runIndexer(services: Services, options: { maxRange?: bigin
   if (!contract.enabled) return { status: "unavailable", reason: contract.reason };
   if (!services.payments || !services.collabs) return { status: "unavailable", reason: "No database configured." };
   if (!services.chain) return { status: "unavailable", reason: "MONAD_RPC_URL is not configured." };
+  // Scanning from block 0 would never catch up with Monad's head.
+  if (services.config.paymentsDeployBlock === null) {
+    return { status: "unavailable", reason: "CAMPAIGN_PAYMENTS_DEPLOY_BLOCK is not configured." };
+  }
   const chain: ChainReader = services.chain;
   const payments = services.payments;
   const maxRange = options.maxRange ?? MAX_RANGE;
@@ -55,7 +59,7 @@ export async function runIndexer(services: Services, options: { maxRange?: bigin
 
     const head = await chain.getBlockNumber();
     const confirmed = head - BigInt(services.config.paymentConfirmations - 1);
-    const start = services.config.paymentsDeployBlock ?? BigInt(0);
+    const start = services.config.paymentsDeployBlock;
     let fromBlock = cursor === null ? start : cursor + BigInt(1) - RECONCILE_WINDOW;
     if (fromBlock < start) fromBlock = start;
     if (confirmed < fromBlock) {

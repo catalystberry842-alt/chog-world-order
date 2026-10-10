@@ -87,9 +87,9 @@ export class MemoryPassportStore implements PassportStore {
       id: randomUUID(),
       verificationData: input.verificationData ?? null,
       reviewerNote: null,
-      reviewerId: null,
-      reviewedAt: null,
-      verifiedAt: null,
+      reviewerId: input.reviewerId ?? null,
+      reviewedAt: input.reviewedAt ?? null,
+      verifiedAt: input.verifiedAt ?? null,
       createdAt: this.now(),
     };
     this.evidence.push(record);

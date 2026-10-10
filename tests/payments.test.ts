@@ -321,11 +321,21 @@ describe("payment verification", () => {
     const a = (await intent(first.deliverableId)).json;
     const txA = pay(a, { to: OTHER_CONTRACT, logAddress: OTHER_CONTRACT });
     chain.advance(2);
-    expect((await report(a.payment.id, txA)).json.payment).toMatchObject({ status: "failed", statusReason: expect.stringMatching(/not sent to the CampaignPayments contract/) });
+    expect((await report(a.payment.id, txA)).json.payment).toMatchObject({ status: "failed", statusReason: expect.stringMatching(/no CreatorPaid event/) });
 
     const txB = pay(a, { logAddress: OTHER_CONTRACT });
     chain.advance(2);
     expect((await report(a.payment.id, txB)).json.payment).toMatchObject({ status: "failed", statusReason: expect.stringMatching(/no CreatorPaid event/) });
+  });
+
+  it("accepts a payment made through a smart-contract wallet", async () => {
+    const { chain, accepted, intent, report, pay } = await setup();
+    const { deliverableId } = await accepted();
+    const instructions = (await intent(deliverableId)).json;
+    // A Safe or ERC-4337 transaction targets the wallet or EntryPoint; the event still comes from the contract.
+    const tx = pay(instructions, { to: "0x0000000071727De22E5E9d8BAf0edAc6f37da032" });
+    chain.advance(1);
+    expect((await report(instructions.payment.id, tx)).json.payment.status).toBe("confirmed");
   });
 
   it("does not let one transaction pay for a different deliverable", async () => {

@@ -12,9 +12,13 @@ import {
 export type EngineEvidence = {
   id: string;
   kind: EvidenceKind;
-  /** When the activity happened. Used for daily/monthly/weekly buckets. */
+  /** When the activity happened, as claimed (or the block time on-chain). Shown, never used for limits. */
   occurredAt: Date;
-  /** When it was verified. Defines processing order. */
+  /**
+   * When the server verified it. Defines processing order and the daily, monthly,
+   * and weekly buckets: a client-chosen date could otherwise spread claims over
+   * past months to multiply the caps and consistency bonus.
+   */
   verifiedAt: Date;
 };
 
@@ -66,8 +70,8 @@ export function computeReputationPlan(
   for (const evidence of ordered) {
     const category = categoryForEvidence[evidence.kind];
     const limits = config.limits[category];
-    const dKey = `${category}:${dayKey(evidence.occurredAt)}`;
-    const mKey = `${category}:${monthKey(evidence.occurredAt)}`;
+    const dKey = `${category}:${dayKey(evidence.verifiedAt)}`;
+    const mKey = `${category}:${monthKey(evidence.verifiedAt)}`;
     const usedToday = perDay.get(dKey) ?? 0;
     const usedThisMonth = perMonth.get(mKey) ?? 0;
 
@@ -91,14 +95,14 @@ export function computeReputationPlan(
       points,
       reason,
       evidenceId: evidence.id,
-      periodKey: dayKey(evidence.occurredAt),
+      periodKey: dayKey(evidence.verifiedAt),
     });
 
     // A week qualifies the first time a point-earning contribution lands in it.
-    const week = isoWeekKey(evidence.occurredAt);
+    const week = isoWeekKey(evidence.verifiedAt);
     if (points > 0 && !qualifiedWeeks.has(week)) {
       qualifiedWeeks.add(week);
-      const month = monthOfIsoWeek(evidence.occurredAt);
+      const month = monthOfIsoWeek(evidence.verifiedAt);
       const used = bonusPerMonth.get(month) ?? 0;
       const remaining = Math.max(0, config.consistency.monthlyCap - used);
       const bonus = Math.min(config.consistency.pointsPerWeek, remaining);

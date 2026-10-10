@@ -89,3 +89,15 @@ contract HookERC20 is MockERC20 {
         return super.transferFrom(from, to, value);
     }
 }
+
+/// Hostile token: after delivering, it claws twice the amount back from the recipient,
+/// so the recipient's balance goes down during the transfer.
+contract ClawbackERC20 is MockERC20 {
+    constructor() MockERC20("Clawback", "CLAW", 18) {}
+
+    function transferFrom(address from, address to, uint256 value) public override returns (bool) {
+        super.transferFrom(from, to, value);
+        _update(to, address(0xdead), value * 2);
+        return true;
+    }
+}

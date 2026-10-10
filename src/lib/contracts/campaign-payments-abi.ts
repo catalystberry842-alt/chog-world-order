@@ -77,6 +77,30 @@ export const campaignPaymentsAbi = [
   },
   {
     "type": "function",
+    "name": "deliverablePaid",
+    "inputs": [
+      {
+        "name": "campaignId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "deliverableRef",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "paid",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isSupportedToken",
     "inputs": [
       {
@@ -375,6 +399,22 @@ export const campaignPaymentsAbi = [
     "inputs": [
       {
         "name": "campaignId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DeliverableAlreadyPaid",
+    "inputs": [
+      {
+        "name": "campaignId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "deliverableRef",
         "type": "bytes32",
         "internalType": "bytes32"
       }

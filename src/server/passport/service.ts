@@ -134,6 +134,10 @@ export async function getPassport(services: Services, rawAddress: string, viewer
 // ---------------------------------------------------------------------------
 
 const earliestActivity = new Date("2025-01-01T00:00:00Z");
+/** Open claims per wallet, so one wallet cannot flood the review queue. */
+export const MAX_PENDING_CLAIMS = 20;
+
+const endOfUtcDay = (date: Date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
 
 /**
  * Stores an evidence claim for the signed-in wallet and runs its handler.
@@ -145,10 +149,21 @@ export async function submitEvidence(services: Services, auth: AuthContext, clai
   const prepared = handler.prepare(claim);
   const now = services.now();
 
+  // Dates arrive as noon UTC of the chosen day, so compare with the end of today, not "now".
   const occurredAt = claim.occurredAt ?? now;
-  if (occurredAt > now || occurredAt < earliestActivity) {
+  if (occurredAt > endOfUtcDay(now) || occurredAt < earliestActivity) {
     throw badRequest("The activity date must be in the past and after January 2025.", "invalid_date");
   }
+
+  const open = await store.listEvidence({ userId: auth.user.id, status: "pending", limit: MAX_PENDING_CLAIMS });
+  if (open.length >= MAX_PENDING_CLAIMS) {
+    throw conflict("too_many_pending", `You have ${MAX_PENDING_CLAIMS} claims waiting for review. Wait for some to be reviewed first.`);
+  }
+
+  // A transaction has exactly one sender, and only that wallet can ever verify it, so the
+  // on-chain key is scoped to the claimant. Someone else claiming your transaction first
+  // gets their own (rejected) record and cannot block yours.
+  const dedupeKey = handler.method === "onchain-receipt" ? `${prepared.dedupeKey}:${auth.user.address.toLowerCase()}` : prepared.dedupeKey;
 
   let record: EvidenceRecord;
   try {
@@ -160,7 +175,7 @@ export async function submitEvidence(services: Services, auth: AuthContext, clai
       title: claim.title,
       summary: claim.summary,
       reference: prepared.reference,
-      dedupeKey: prepared.dedupeKey,
+      dedupeKey,
       chainId: prepared.chainId,
       txHash: prepared.txHash,
       appId: prepared.appId,
@@ -253,6 +268,8 @@ export async function reviewEvidence(services: Services, reviewer: UserRecord, e
     reviewedAt: now,
     verifiedAt: approve ? now : null,
     verificationData: { decision: approve ? "approved" : "rejected", reviewedAt: now.toISOString() },
+    // A rejected claim releases its key, so the real author can still submit the same link.
+    ...(approve ? {} : { dedupeKey: `released:${evidence.id}:${evidence.dedupeKey}` }),
   });
   if (!updated) throw conflict("already_reviewed", "This evidence has already been reviewed.");
 

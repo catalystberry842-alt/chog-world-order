@@ -27,10 +27,38 @@ export async function handle(run: () => Promise<Response>): Promise<Response> {
 
 const MAX_BODY_BYTES = 16_384;
 
+const tooLarge = () => new HttpError(413, "too_large", "Request body is too large.");
+
+/** Reads at most MAX_BODY_BYTES, refusing larger bodies before buffering them. */
+async function readCappedText(request: Request) {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > MAX_BODY_BYTES) throw tooLarge();
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BODY_BYTES) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 /** Reads and validates a JSON body. */
 export async function readBody<T extends z.ZodType>(request: Request, schema: T): Promise<z.infer<T>> {
-  const text = await request.text();
-  if (text.length > MAX_BODY_BYTES) throw new HttpError(413, "too_large", "Request body is too large.");
+  const text = await readCappedText(request);
   let data: unknown;
   try {
     data = JSON.parse(text);

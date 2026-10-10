@@ -55,6 +55,8 @@ export const adjustmentSchema = z
   })
   .strict();
 
+export const pageQuerySchema = z.object({ page: z.coerce.number().int().min(1).max(10_000).default(1) });
+
 export const leaderboardQuerySchema = z.object({
   category: z.enum(reputationCategories).optional(),
   page: z.coerce.number().int().min(1).max(10_000).default(1),

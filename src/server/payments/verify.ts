@@ -135,9 +135,9 @@ async function confirmedReceipt(chain: ChainReader, contract: Address, txHash: s
     return { error: { kind: "pending" as const, reason: "Could not reach the Monad RPC. Will retry." } };
   }
   if (receipt.status !== "success") return { error: { kind: "failed" as const, reason: "The transaction reverted." } };
-  if (!receipt.to || !sameAddress(receipt.to, contract)) {
-    return { error: { kind: "failed" as const, reason: "The transaction was not sent to the CampaignPayments contract." } };
-  }
+  // `receipt.to` is not checked: payments from smart-contract wallets (Safe, ERC-4337) reach the
+  // contract through another address. Only logs emitted by the configured contract are decoded,
+  // and the event's payer must be the campaign owner.
   return { receipt, events: decodeContractEvents(receipt.logs as Log[], contract) };
 }
 

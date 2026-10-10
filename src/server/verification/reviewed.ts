@@ -1,4 +1,4 @@
-import { canonicalCodeUrl, canonicalUrl } from "@/server/verification/canonical-url";
+import { canonicalCodeUrl } from "@/server/verification/canonical-url";
 import type { VerificationHandler } from "@/server/verification/types";
 
 /**
@@ -10,8 +10,9 @@ export const reviewedContributionHandler: VerificationHandler = {
   method: "reviewer-approval",
   reviewerApproves: true,
   prepare(claim) {
-    const reference = canonicalUrl(claim.reference);
-    return { reference, dedupeKey: `${claim.kind}:${reference}`, chainId: null, txHash: null, appId: null };
+    const reference = canonicalCodeUrl(claim.reference);
+    // The key does not include the kind: one link earns once, whatever it is claimed as.
+    return { reference, dedupeKey: `url:${reference}`, chainId: null, txHash: null, appId: null };
   },
   async verifyOnSubmit() {
     return { status: "pending", reason: "Waiting for an authorized reviewer to check the evidence." };
@@ -25,7 +26,7 @@ export const codeContributionHandler: VerificationHandler = {
   reviewerApproves: true,
   prepare(claim) {
     const reference = canonicalCodeUrl(claim.reference);
-    return { reference, dedupeKey: `code:${reference}`, chainId: null, txHash: null, appId: null };
+    return { reference, dedupeKey: `url:${reference}`, chainId: null, txHash: null, appId: null };
   },
   async verifyOnSubmit() {
     return { status: "pending", reason: "Waiting for a maintainer to confirm the change was merged and is yours." };

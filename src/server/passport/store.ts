@@ -122,7 +122,9 @@ export type LeaderboardRow = {
 export type NewEvidence = Omit<
   EvidenceRecord,
   "id" | "createdAt" | "reviewerNote" | "reviewerId" | "reviewedAt" | "verifiedAt"
->;
+> &
+  // Set only when a record is created already verified (Collab Board acceptance).
+  Partial<Pick<EvidenceRecord, "reviewerId" | "reviewedAt" | "verifiedAt">>;
 
 export type EvidenceUpdate = Partial<
   Pick<
@@ -135,6 +137,7 @@ export type EvidenceUpdate = Partial<
     | "verifiedAt"
     | "occurredAt"
     | "verificationData"
+    | "dedupeKey"
   >
 >;
 

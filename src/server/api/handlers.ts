@@ -21,6 +21,7 @@ import {
   evidenceClaimSchema,
   issueSchema,
   leaderboardQuerySchema,
+  pageQuerySchema,
   reviewQueueStatusSchema,
   reviewSchema,
   signInSchema,
@@ -173,7 +174,9 @@ export const getReputationEvents = (request: Request, services: Services, addres
   handle(async () => {
     const { reputation } = await loadReputation(services, address);
     const url = new URL(request.url);
-    const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+    const query = pageQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+    if (!query.success) throw badRequest("Invalid page.");
+    const { page } = query.data;
     const pageSize = 50;
     return json({
       address: normalizeAddress(address),

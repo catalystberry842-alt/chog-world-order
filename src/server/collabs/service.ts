@@ -377,6 +377,10 @@ export async function reviewApplication(
   const campaign = await ownedCampaign(collabs, auth, app.campaignId);
   if (app.applicantId === auth.user.id) throw forbidden("You cannot review your own application.");
   if (campaign.status !== "published") throw conflict("campaign_closed", "This campaign is not open.");
+  // An accepted creator could never submit after the deadline, so accepting would only use up a slot.
+  if (input.decision === "accept" && campaign.deadline <= services.now()) {
+    throw conflict("deadline_passed", "The deadline has passed, so this application can no longer be accepted.");
+  }
 
   const result = await collabs.decideApplication(applicationId, {
     status: input.decision === "accept" ? "accepted" : "rejected",
@@ -476,11 +480,13 @@ async function recordAcceptedContribution(
   const store = requireStore(services);
   let evidenceId: string;
   try {
+    // Created verified in a single write, so a crash can never leave it stuck as pending.
+    // If the process stops before issuance, POST /api/stamps/issue repairs it (idempotent).
     const created = await store.createEvidence({
       userId: deliverable.creatorId,
       kind: "campaign-deliverable",
       method: "campaign-acceptance",
-      status: "pending",
+      status: "verified",
       title: `Campaign: ${campaign.title}`,
       summary: `Deliverable accepted by ${campaign.projectName}.`,
       reference: deliverable.id,
@@ -491,27 +497,22 @@ async function recordAcceptedContribution(
       appId: null,
       category: categoryForEvidence["campaign-deliverable"],
       occurredAt: deliverable.createdAt,
-      statusReason: null,
-      verificationData: null,
+      statusReason: `Accepted by the campaign owner. Content hash ${deliverable.contentHash.slice(0, 10)}…`,
+      verificationData: {
+        campaignId: campaign.id,
+        deliverableId: deliverable.id,
+        contentHash: deliverable.contentHash,
+        revision: deliverable.revision,
+      },
+      reviewerId,
+      reviewedAt: now,
+      verifiedAt: now,
     });
     evidenceId = created.id;
   } catch (error) {
     if (error instanceof DuplicateEvidenceError) return;
     throw error;
   }
-  await store.updateEvidenceIfStatus(evidenceId, "pending", {
-    status: "verified",
-    statusReason: `Accepted by the campaign owner. Content hash ${deliverable.contentHash.slice(0, 10)}…`,
-    reviewerId,
-    reviewedAt: now,
-    verifiedAt: now,
-    verificationData: {
-      campaignId: campaign.id,
-      deliverableId: deliverable.id,
-      contentHash: deliverable.contentHash,
-      revision: deliverable.revision,
-    },
-  });
   await issueForEvidence(services, evidenceId, reviewerId);
 }
 

@@ -10,7 +10,7 @@ import { isPaymentTokenKey, paymentTokens } from "@/lib/collabs/tokens";
 import type { PaymentInstructions, RegistrationInstructions } from "@/lib/collabs/types";
 import { sameAddress } from "@/lib/passport/address";
 import { requireStore, type AuthContext } from "@/server/auth/session";
-import { requireCollabs } from "@/server/collabs/service";
+import { publicationProblems, requireCollabs } from "@/server/collabs/service";
 import type { CampaignWithCounts } from "@/server/collabs/store";
 import { conflict, forbidden, notFound, serviceUnavailable } from "@/server/errors";
 import type { ChainReader } from "@/server/payments/chain";
@@ -101,9 +101,25 @@ export async function startRegistration(services: Services, auth: AuthContext, c
   return instructions;
 }
 
+/**
+ * Publishes a draft once its registration is verified. The campaign is
+ * validated again here: the draft may have been edited after an earlier
+ * failed attempt, or its deadline may have passed while waiting. If it is no
+ * longer publishable, it stays a draft with the problems listed; the on-chain
+ * registration remains valid, so publishing again after fixing them works.
+ */
 async function publishRegistered(services: Services, campaign: CampaignWithCounts, event: RegistrationEvent) {
   const collabs = requireCollabs(services);
   const now = services.now();
+  const problems = publicationProblems(campaign, now);
+  if (problems.length > 0) {
+    await collabs.updateCampaignIfStatus(campaign.id, "draft", {
+      registrationStatus: "failed",
+      registrationTxHash: event.txHash,
+      registrationError: `Registered on Monad, but not published: ${problems.join(" ")} Fix the draft and publish again.`,
+    });
+    return false;
+  }
   await collabs.updateCampaignIfStatus(campaign.id, "draft", {
     status: "published",
     publishedAt: now,
@@ -112,6 +128,7 @@ async function publishRegistered(services: Services, campaign: CampaignWithCount
     registrationTxHash: event.txHash,
     registrationError: null,
   });
+  return true;
 }
 
 async function applyRegistrationCheck(services: Services, campaign: CampaignWithCounts, check: TxCheck<RegistrationEvent>, hint?: string) {
@@ -172,7 +189,13 @@ export async function confirmRegistration(services: Services, auth: AuthContext,
     const check = await checkRegistrationTx(chain, contract, { chainCampaignId: campaign.chainCampaignId, owner }, txHash, minConfirmations);
     return applyRegistrationCheck(services, campaign, check, txHash);
   }
-  const event = await findRegistrationEvent(chain, contract, campaign.chainCampaignId as Hex, services.config.paymentsDeployBlock ?? BigInt(0));
+  let event: RegistrationEvent | null;
+  try {
+    event = await findRegistrationEvent(chain, contract, campaign.chainCampaignId as Hex, services.config.paymentsDeployBlock ?? BigInt(0));
+  } catch {
+    // RPC down or log range refused: nothing is decided, the owner (or the indexer) retries.
+    return applyRegistrationCheck(services, campaign, { kind: "pending", reason: "Could not search Monad for the registration right now. Try again shortly." });
+  }
   if (!event) {
     return applyRegistrationCheck(services, campaign, { kind: "pending", reason: "No registration found on Monad yet." });
   }
@@ -192,8 +215,7 @@ export async function applyRegistrationEvent(services: Services, event: Registra
   const owner = await store.findUserById(campaign.ownerId);
   if (!owner || !sameAddress(owner.address, event.owner)) return "owner-mismatch";
   if (campaign.status !== "draft") return "ignored";
-  await publishRegistered(services, campaign, event);
-  return "registered";
+  return (await publishRegistered(services, campaign, event)) ? "registered" : "registered-not-publishable";
 }
 
 // ---------------------------------------------------------------------------
