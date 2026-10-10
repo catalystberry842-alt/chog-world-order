@@ -2,7 +2,7 @@ import type { Log } from "viem";
 import { campaignPaymentsAbi } from "@/lib/contracts/campaign-payments";
 import type { ChainReader } from "@/server/payments/chain";
 import { applyPaymentEvent, applyRegistrationEvent } from "@/server/payments/service";
-import { assertPaymentsChain, decodeContractEvents, type ContractEvent } from "@/server/payments/verify";
+import { assertPaymentsContract, decodeContractEvents, eventArgs } from "@/server/payments/verify";
 import type { Services } from "@/server/services";
 
 const CURSOR_KEY = "campaign-payments";
@@ -29,16 +29,6 @@ export type IndexerResult =
       caughtUp: boolean;
     };
 
-function serialiseArgs(event: ContractEvent): Record<string, string> {
-  const { txHash, logIndex, blockNumber, blockHash, name, ...args } = event;
-  void txHash;
-  void logIndex;
-  void blockNumber;
-  void blockHash;
-  void name;
-  return Object.fromEntries(Object.entries(args).map(([key, value]) => [key, String(value).toLowerCase()]));
-}
-
 /**
  * Indexes CampaignRegistered and CreatorPaid events, then applies them.
  *
@@ -61,9 +51,7 @@ export async function runIndexer(services: Services, options: { maxRange?: bigin
 
   const cursor = await payments.getCursor(CURSOR_KEY);
   try {
-    await assertPaymentsChain(chain);
-    const code = await chain.getCode({ address: contract.address });
-    if (!code || code === "0x") throw new Error(`No contract code at ${contract.address}.`);
+    await assertPaymentsContract(chain, contract.address);
 
     const head = await chain.getBlockNumber();
     const confirmed = head - BigInt(services.config.paymentConfirmations - 1);
@@ -91,11 +79,12 @@ export async function runIndexer(services: Services, options: { maxRange?: bigin
         logIndex: event.logIndex,
         blockNumber: event.blockNumber,
         blockHash: event.blockHash.toLowerCase(),
-        args: serialiseArgs(event),
+        args: eventArgs(event),
       });
       if (recorded.created) eventsNew += 1;
       const outcome = event.name === "CampaignRegistered" ? await applyRegistrationEvent(services, event) : await applyPaymentEvent(services, event);
-      if (outcome !== recorded.outcome) await payments.setChainEventOutcome(recorded.id, outcome);
+      // The first outcome is kept: later runs only see the event again.
+      if (recorded.outcome === null) await payments.setChainEventOutcome(recorded.id, outcome);
       outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
     }
 

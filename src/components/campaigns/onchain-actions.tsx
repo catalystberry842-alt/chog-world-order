@@ -2,14 +2,15 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { BaseError, erc20Abi, UserRejectedRequestError, type Address, type Hash, type Hex } from "viem";
+import { BaseError, erc20Abi, UserRejectedRequestError, zeroAddress, type Address, type Hash, type Hex } from "viem";
 import { useConfig } from "wagmi";
-import { getConnection, readContract, switchChain, waitForTransactionReceipt, writeContract } from "wagmi/actions";
+import { getConnection, getConnectorClient, switchChain, writeContract } from "wagmi/actions";
+import { readContract, waitForTransactionReceipt } from "viem/actions";
 import { Badge } from "@/components/ui/badge";
 import { describeWalletError } from "@/components/wallet/wallet-errors";
 import { ApiError } from "@/lib/client/passport-api";
 import { collabsApi } from "@/lib/client/collabs-api";
-import { campaignPaymentsAbi } from "@/lib/contracts/campaign-payments";
+import { campaignPaymentsAbi, explorerTxUrl } from "@/lib/contracts/campaign-payments";
 import { formatTokenUnits } from "@/lib/collabs/rules";
 import type { CampaignView, PaymentStatus, PaymentView } from "@/lib/collabs/types";
 import { shortAddress } from "@/lib/format";
@@ -30,6 +31,9 @@ const describe = (error: unknown) => {
  * Makes sure the connected wallet is the expected one and is on Monad,
  * asking the wallet to switch networks if needed.
  */
+/** Reads through the connected wallet's provider, the same chain view the transaction will use. */
+const walletClient = (config: WagmiConfig) => getConnectorClient(config, { chainId: targetChain.id });
+
 async function prepareWallet(config: WagmiConfig, expected: string, chainId: number) {
   const connection = getConnection(config);
   if (!connection.address) throw new Error("Connect your wallet first.");
@@ -62,6 +66,20 @@ export function RegistrationPanel({ campaign, ownerAddress, onChanged }: { campa
       const { registration: instructions } = await collabsApi.publish(campaign.id);
       if (!instructions) return; // Payments are off on this deployment: published directly.
       await prepareWallet(config, ownerAddress, instructions.chainId);
+      // A campaign can be registered once. If an earlier transaction already landed
+      // (for example the tab closed before it was reported), let the server find it
+      // instead of sending a second transaction that would revert.
+      const registeredOwner = await readContract(await walletClient(config), {
+        address: instructions.contractAddress as Address,
+        abi: campaignPaymentsAbi,
+        functionName: "campaignOwner",
+        args: [instructions.chainCampaignId as Hex],
+      });
+      if (registeredOwner !== zeroAddress) {
+        setStep("verifying");
+        await collabsApi.checkRegistration(campaign.id);
+        return;
+      }
       setStep("wallet");
       const hash = await writeContract(config, {
         address: instructions.contractAddress as Address,
@@ -94,7 +112,16 @@ export function RegistrationPanel({ campaign, ownerAddress, onChanged }: { campa
             ? "The last registration attempt could not be verified."
             : "Publishing registers this campaign in the CampaignPayments contract from your wallet. Gas is paid in MON."}
       </p>
-      {registration.txHash && <p className="font-mono text-xs break-all text-white/45">Transaction {registration.txHash}</p>}
+      {registration.txHash && (
+        <a
+          href={explorerTxUrl(registration.txHash)}
+          target="_blank"
+          rel="noreferrer"
+          className="w-fit font-mono text-xs break-all text-monad-300 underline-offset-2 hover:underline"
+        >
+          Transaction {registration.txHash}
+        </a>
+      )}
       {registration.error && <p className="text-sm text-crayon-yellow">{registration.error}</p>}
       <div className="flex flex-wrap gap-2">
         {pending && (
@@ -222,12 +249,11 @@ export function PaymentPanel({
 
       if (instructions.approval) {
         const { token, spender, amount } = instructions.approval;
-        const allowance = await readContract(config, {
+        const allowance = await readContract(await walletClient(config), {
           address: token as Address,
           abi: erc20Abi,
           functionName: "allowance",
           args: [ownerAddress as Address, spender as Address],
-          chainId: targetChain.id,
         });
         if (allowance < BigInt(amount)) {
           setStep("approve");
@@ -239,7 +265,7 @@ export function PaymentPanel({
             chainId: targetChain.id,
           });
           setStep("approving");
-          const receipt = await waitForTransactionReceipt(config, { hash: approval, chainId: targetChain.id });
+          const receipt = await waitForTransactionReceipt(await walletClient(config), { hash: approval });
           if (receipt.status !== "success") throw new Error("The token approval reverted. No payment was sent.");
         }
       }

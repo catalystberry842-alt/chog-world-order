@@ -13,7 +13,7 @@ import {
   type Hash,
   type Hex,
 } from "viem";
-import { campaignPaymentsAbi } from "@/lib/contracts/campaign-payments";
+import { campaignPaymentsAbi, computeCampaignId } from "@/lib/contracts/campaign-payments";
 import type { ChainReader } from "@/server/payments/chain";
 
 type FakeLog = {
@@ -42,6 +42,8 @@ export class FakeChain {
   receipts = new Map<string, FakeReceipt>();
   logs: FakeLog[] = [];
   failNextCalls = 0;
+  /** Set false to simulate a configured address that holds some other contract. */
+  isCampaignPayments = true;
 
   constructor(readonly contract: Address) {
     this.code[contract.toLowerCase()] = "0x6080";
@@ -138,9 +140,12 @@ export class FakeChain {
             (!params.args?.campaignId || log.topics[1]?.toLowerCase() === params.args.campaignId.toLowerCase()),
         );
       }) as unknown as ChainReader["getLogs"],
-      readContract: (async ({ functionName, args }: { functionName: string; args: [Address] }) => {
+      readContract: (async ({ address, functionName, args }: { address: Address; functionName: string; args: [Address, Hex?] }) => {
         this.maybeFail();
+        if (!this.isCampaignPayments) throw new Error("execution reverted");
         if (functionName === "isSupportedToken") return this.supportedTokens.has(args[0].toLowerCase());
+        // Like the contract: keccak256(abi.encode(block.chainid, address(this), owner, salt)).
+        if (functionName === "computeCampaignId") return computeCampaignId(address, args[0], args[1]!, this.chainId);
         throw new Error(`unexpected readContract ${functionName}`);
       }) as unknown as ChainReader["readContract"],
     };

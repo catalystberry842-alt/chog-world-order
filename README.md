@@ -230,6 +230,8 @@ accept deliverable → owner: POST /payment → wallet: payNative / payToken (ap
 indexer (cron) → reads confirmed blocks only → applies the same checks to every event
 ```
 
+- Before any registration or payment instructions are issued, the server proves the configured address is CampaignPayments on Monad: the RPC must report chain 143, the address must hold code, and the contract's `computeCampaignId` must match the app's own calculation. Otherwise the endpoints answer `503 contract_unverified`, so a mistyped address can never receive MON.
+- Nothing is decided before `PAYMENT_CONFIRMATIONS` blocks, including mismatches. Verified events are stored with the observed token, amount, payer, and creator, whether the browser's report or the indexer found them.
 - The server never holds keys or signs transactions. The browser only reports a hash; the server reads the receipt, requires the transaction to target the configured contract, decodes `CreatorPaid` from that contract only, and compares campaign, deliverable reference, recipient, token, amount, and payer with what it expected. Anything different is `mismatch`; reverted or unrelated transactions are `failed`.
 - A payment counts after `PAYMENT_CONFIRMATIONS` blocks. One payment per deliverable, and an on-chain event can prove only one payment (unique `(txHash, logIndex)`). Raw events are stored once per `(chain, tx, log index)`.
 - The indexer re-scans the last 500 blocks every run and never advances its cursor after an RPC error, so interrupted confirmations and outages catch up. Run it every few minutes with any scheduler (Vercel Hobby cron is limited to once a day).

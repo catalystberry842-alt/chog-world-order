@@ -463,3 +463,80 @@ describe("payments and the passport", () => {
     expect(after.reputation.total).toBe(scoreBefore);
   });
 });
+
+describe("contract validation", () => {
+  it("refuses to publish against an address that is not CampaignPayments", async () => {
+    const { chain, services, draft, publish } = await setup();
+    chain.isCampaignPayments = false;
+    const id = await draft();
+    const result = await publish(id);
+    expect(result.status).toBe(503);
+    expect(result.json.error.code).toBe("contract_unverified");
+    // Nothing changed: no registration was started.
+    expect((await services.collabMemory.findCampaign(id))?.registrationStatus).toBe("not-registered");
+  });
+
+  it("refuses payment instructions when the address has no code, the contract is different, or the RPC is on another chain", async () => {
+    const { services, owner, accepted } = await setup();
+    const { deliverableId } = await accepted();
+    const attempt = async (chain: FakeChain) =>
+      body(await postPaymentIntent(post(`/api/deliverables/${deliverableId}/payment`, {}, { cookie: owner.cookie }), { ...services, chain: chain.reader() }, deliverableId));
+
+    const empty = new FakeChain(CONTRACT);
+    empty.code = {};
+    const other = new FakeChain(CONTRACT);
+    other.isCampaignPayments = false;
+    const wrongChain = new FakeChain(CONTRACT);
+    wrongChain.chainId = 10143;
+    for (const [chain, reason] of [
+      [empty, /No contract code/],
+      [other, /does not behave like CampaignPayments/],
+      [wrongChain, /chain 10143/],
+    ] as const) {
+      const result = await attempt(chain);
+      expect(result.status).toBe(503);
+      expect(result.json.error).toMatchObject({ code: "contract_unverified", message: expect.stringMatching(reason) });
+    }
+    expect(services.paymentMemory.payments).toHaveLength(0);
+  });
+});
+
+describe("confirmation policy", () => {
+  it("does not judge a mismatching payment until it has enough confirmations", async () => {
+    const { chain, accepted, intent, report, status, pay } = await setup();
+    const { deliverableId } = await accepted();
+    const instructions = (await intent(deliverableId)).json;
+    const tx = pay(instructions, { amount: AMOUNT * BigInt(2) });
+
+    const shallow = (await report(instructions.payment.id, tx)).json.payment;
+    expect(shallow.status).toBe("awaiting-transaction");
+    expect(shallow.txHash).toBeNull();
+    expect(shallow.statusReason).toMatch(/Waiting for confirmations \(1\/2\).*does not match/);
+
+    chain.advance(1);
+    expect((await status(instructions.payment.id)).json.payment).toMatchObject({ status: "mismatch", txHash: tx });
+  });
+
+  it("keeps the verified raw event so the indexer treats it as already seen", async () => {
+    const { chain, services, creator, accepted, intent, report, pay } = await setup();
+    const { deliverableId } = await accepted();
+    const instructions = (await intent(deliverableId)).json;
+    const tx = pay(instructions);
+    chain.advance(1);
+    expect((await report(instructions.payment.id, tx)).json.payment.status).toBe("confirmed");
+
+    const stored = services.paymentMemory.events.find((event) => event.txHash === tx);
+    expect(stored).toMatchObject({
+      eventName: "CreatorPaid",
+      logIndex: 0,
+      outcome: "confirmed-payment",
+      args: { creator: creator.address, amount: AMOUNT.toString(), token: NATIVE_TOKEN_ADDRESS.toLowerCase() },
+    });
+    expect(stored?.blockNumber).toBeTypeOf("bigint");
+
+    const run = await runIndexer(services);
+    expect(run).toMatchObject({ status: "ok" });
+    if (run.status === "ok") expect(run.eventsNew).toBe(0);
+    expect(services.paymentMemory.events.find((event) => event.txHash === tx)?.outcome).toBe("confirmed-payment");
+  });
+});

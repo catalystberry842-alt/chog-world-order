@@ -1,5 +1,5 @@
 import { parseEventLogs, TransactionReceiptNotFoundError, type Address, type Hash, type Hex, type Log } from "viem";
-import { campaignPaymentsAbi, PAYMENTS_CHAIN_ID } from "@/lib/contracts/campaign-payments";
+import { campaignPaymentsAbi, computeCampaignId, PAYMENTS_CHAIN_ID } from "@/lib/contracts/campaign-payments";
 import { sameAddress } from "@/lib/passport/address";
 import type { ChainReader } from "@/server/payments/chain";
 import type { PaymentRecord } from "@/server/payments/store";
@@ -78,6 +78,46 @@ export async function assertPaymentsChain(chain: ChainReader) {
   verifiedChains.set(chain, true);
 }
 
+const verifiedContracts = new WeakMap<object, Set<string>>();
+
+/**
+ * Proves the configured address is CampaignPayments on Monad before anyone is
+ * asked to send funds to it: the RPC must be on chain 143, the address must
+ * hold code, and the contract's own computeCampaignId must agree with ours
+ * (it hashes block.chainid and address(this)). A typo pointing at a wallet
+ * or another contract fails here instead of receiving MON.
+ */
+export async function assertPaymentsContract(chain: ChainReader, contract: Address) {
+  await assertPaymentsChain(chain);
+  const known = verifiedContracts.get(chain);
+  if (known?.has(contract.toLowerCase())) return;
+  const code = await chain.getCode({ address: contract });
+  if (!code || code === "0x") throw new Error(`No contract code at ${contract} on Monad.`);
+  const probeOwner = "0x000000000000000000000000000000000000c0de" as Address;
+  const probeSalt = `0x${"11".repeat(32)}` as Hex;
+  let onchain: Hex;
+  try {
+    onchain = await chain.readContract({ address: contract, abi: campaignPaymentsAbi, functionName: "computeCampaignId", args: [probeOwner, probeSalt] });
+  } catch {
+    throw new Error(`The contract at ${contract} does not behave like CampaignPayments.`);
+  }
+  if (onchain.toLowerCase() !== computeCampaignId(contract, probeOwner, probeSalt).toLowerCase()) {
+    throw new Error(`The contract at ${contract} is not the expected CampaignPayments deployment.`);
+  }
+  verifiedContracts.set(chain, (known ?? new Set()).add(contract.toLowerCase()));
+}
+
+/** Event fields as strings, for the raw event log. */
+export function eventArgs(event: ContractEvent): Record<string, string> {
+  const { txHash, logIndex, blockNumber, blockHash, name, ...args } = event;
+  void txHash;
+  void logIndex;
+  void blockNumber;
+  void blockHash;
+  void name;
+  return Object.fromEntries(Object.entries(args).map(([key, value]) => [key, String(value).toLowerCase()]));
+}
+
 async function confirmedReceipt(chain: ChainReader, contract: Address, txHash: string) {
   if (!txHashPattern.test(txHash)) return { error: { kind: "failed" as const, reason: "Not a transaction hash." } };
   try {
@@ -128,11 +168,13 @@ export async function checkPaymentTx(
   );
   if (!event) return { kind: "failed", reason: "The transaction has no CreatorPaid event for this deliverable." };
   const mismatch = paymentMismatch(expected, event);
-  if (mismatch) return { kind: "mismatch", reason: mismatch, event };
   const confirmations = await confirmationsOf(chain, event.blockNumber);
+  // Nothing is decided on a block that could still be reorganised away, not even a mismatch.
   if (confirmations < BigInt(minConfirmations)) {
-    return { kind: "pending", reason: `Waiting for confirmations (${confirmations}/${minConfirmations}).`, event };
+    const waiting = `Waiting for confirmations (${confirmations}/${minConfirmations}).`;
+    return mismatch ? { kind: "pending", reason: `${waiting} The event does not match the expected payment yet: ${mismatch}` } : { kind: "pending", reason: waiting, event };
   }
+  if (mismatch) return { kind: "mismatch", reason: mismatch, event };
   return { kind: "confirmed", event, confirmations };
 }
 
@@ -151,10 +193,12 @@ export async function checkRegistrationTx(
       item.name === "CampaignRegistered" && item.campaignId.toLowerCase() === expected.chainCampaignId.toLowerCase(),
   );
   if (!event) return { kind: "failed", reason: "The transaction has no CampaignRegistered event for this campaign." };
+  const depth = await verifyDepth(chain, event, minConfirmations);
+  if (depth.kind !== "confirmed") return depth;
   if (!sameAddress(event.owner, expected.owner)) {
     return { kind: "mismatch", reason: "Registered by a different wallet than the campaign owner.", event };
   }
-  return verifyDepth(chain, event, minConfirmations);
+  return depth;
 }
 
 async function verifyDepth<T extends LogPosition>(chain: ChainReader, event: T, minConfirmations: number): Promise<TxCheck<T>> {

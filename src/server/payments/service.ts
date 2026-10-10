@@ -16,7 +16,9 @@ import { conflict, forbidden, notFound, serviceUnavailable } from "@/server/erro
 import type { ChainReader } from "@/server/payments/chain";
 import { ProofAlreadyUsedError, type PaymentRecord, type PaymentStore } from "@/server/payments/store";
 import {
+  assertPaymentsContract,
   checkPaymentTx,
+  eventArgs,
   checkRegistrationTx,
   findRegistrationEvent,
   paymentMismatch,
@@ -48,6 +50,23 @@ function requireChain(services: Services): ChainReader {
   return services.chain;
 }
 
+/**
+ * The RPC must be on Monad and the configured address must be the
+ * CampaignPayments contract before any wallet is asked to send to it.
+ */
+async function verifiedContract(services: Services, contract: Address) {
+  const chain = requireChain(services);
+  try {
+    await assertPaymentsContract(chain, contract);
+  } catch (error) {
+    throw serviceUnavailable(
+      `On-chain payments are paused: ${error instanceof Error ? error.message : "the payments contract could not be verified."}`,
+      "contract_unverified",
+    );
+  }
+  return chain;
+}
+
 // ---------------------------------------------------------------------------
 // Campaign registration
 // ---------------------------------------------------------------------------
@@ -60,6 +79,7 @@ function requireChain(services: Services): ChainReader {
  */
 export async function startRegistration(services: Services, auth: AuthContext, campaign: CampaignWithCounts) {
   const { contract } = paymentsSetup(services);
+  await verifiedContract(services, contract);
   const collabs = requireCollabs(services);
   const salt = campaignSalt(campaign.id);
   const chainCampaignId = computeCampaignId(contract, auth.user.address as Address, salt).toLowerCase();
@@ -96,7 +116,22 @@ async function publishRegistered(services: Services, campaign: CampaignWithCount
 
 async function applyRegistrationCheck(services: Services, campaign: CampaignWithCounts, check: TxCheck<RegistrationEvent>, hint?: string) {
   const collabs = requireCollabs(services);
-  if (check.kind === "confirmed") return publishRegistered(services, campaign, check.event);
+  if (check.kind === "confirmed") {
+    const { contract, store } = paymentsSetup(services);
+    const event = check.event;
+    const recorded = await store.recordChainEvent({
+      chainId: services.config.paymentsContract.enabled ? services.config.paymentsContract.chainId : 0,
+      contractAddress: contract,
+      eventName: event.name,
+      txHash: event.txHash.toLowerCase(),
+      logIndex: event.logIndex,
+      blockNumber: event.blockNumber,
+      blockHash: event.blockHash.toLowerCase(),
+      args: eventArgs(event),
+    });
+    if (recorded.outcome === null) await store.setChainEventOutcome(recorded.id, "registered");
+    return publishRegistered(services, campaign, event);
+  }
   if (check.kind === "pending") {
     await collabs.updateCampaignIfStatus(campaign.id, "draft", {
       registrationStatus: "pending",
@@ -193,8 +228,8 @@ export async function preparePayment(services: Services, auth: AuthContext, deli
   const token = paymentTokens[campaign.paymentToken];
   if (!token.enabled) throw conflict("unsupported_token", `${token.symbol} payments are not configured.`);
   const tokenAddress = token.address ?? NATIVE_TOKEN_ADDRESS;
+  const chain = await verifiedContract(services, contract);
   if (token.address) {
-    const chain = requireChain(services);
     const supported = await chain.readContract({ address: contract, abi: campaignPaymentsAbi, functionName: "isSupportedToken", args: [token.address] });
     if (!supported) throw conflict("unsupported_token", `${token.symbol} is not approved in the payments contract.`);
   }
@@ -254,6 +289,27 @@ export async function preparePayment(services: Services, auth: AuthContext, deli
   };
 }
 
+/**
+ * Keeps the raw event (with the observed token, amount, payer, and creator)
+ * once it has enough confirmations, whichever path verified it. Unique per
+ * (chain, tx, log index), so the indexer later sees it as a duplicate.
+ */
+async function recordVerifiedEvent(payments: PaymentStore, payment: PaymentRecord, check: TxCheck<PaymentEvent>) {
+  if (check.kind !== "confirmed" && check.kind !== "mismatch") return;
+  const { event } = check;
+  const recorded = await payments.recordChainEvent({
+    chainId: payment.chainId,
+    contractAddress: payment.contractAddress,
+    eventName: event.name,
+    txHash: event.txHash.toLowerCase(),
+    logIndex: event.logIndex,
+    blockNumber: event.blockNumber,
+    blockHash: event.blockHash.toLowerCase(),
+    args: eventArgs(event),
+  });
+  if (recorded.outcome === null) await payments.setChainEventOutcome(recorded.id, check.kind === "confirmed" ? "confirmed-payment" : "mismatch");
+}
+
 async function applyPaymentCheck(payments: PaymentStore, payment: PaymentRecord, check: TxCheck<PaymentEvent>, now: Date) {
   const open: PaymentRecord["status"][] = ["awaiting-transaction", "pending-confirmation", "failed"];
   const proof = (event: PaymentEvent) => ({
@@ -306,6 +362,7 @@ export async function reportPaymentTransaction(services: Services, auth: AuthCon
     })) ?? payment;
   if (!services.chain) return toPaymentView(hinted);
   const check = await checkPaymentTx(services.chain, contract, hinted, txHash, services.config.paymentConfirmations);
+  await recordVerifiedEvent(payments, hinted, check);
   return toPaymentView((await applyPaymentCheck(payments, hinted, check, services.now())) ?? hinted);
 }
 
@@ -323,6 +380,7 @@ export async function getPaymentStatus(services: Services, auth: AuthContext, pa
   const hash = payment.txHash ?? payment.submittedTxHash;
   if (services.chain && hash && (payment.status === "awaiting-transaction" || payment.status === "pending-confirmation")) {
     const check = await checkPaymentTx(services.chain, contract, payment, hash, services.config.paymentConfirmations);
+    await recordVerifiedEvent(payments, payment, check);
     return toPaymentView((await applyPaymentCheck(payments, payment, check, services.now())) ?? payment);
   }
   return toPaymentView(payment);

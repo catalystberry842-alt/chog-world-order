@@ -1,6 +1,5 @@
 import "server-only";
-import { createPublicClient, http, verifyMessage, type Address, type Hex } from "viem";
-import { monad } from "viem/chains";
+import { verifyMessage, type Address, type Hex } from "viem";
 import { readConfig, type ServerConfig } from "@/server/config";
 import { getPrisma } from "@/server/db";
 import type { CollabStore } from "@/server/collabs/store";
@@ -8,7 +7,7 @@ import { PrismaCollabStore } from "@/server/collabs/prisma-store";
 import { PrismaPassportStore } from "@/server/passport/prisma-store";
 import { PrismaPaymentStore } from "@/server/payments/prisma-store";
 import type { PaymentStore } from "@/server/payments/store";
-import type { ChainReader } from "@/server/payments/chain";
+import { createMonadClient, type ChainReader } from "@/server/payments/chain";
 import type { PassportStore } from "@/server/passport/store";
 import type { OnchainClient } from "@/server/verification/onchain";
 import { createHandlerRegistry, type HandlerRegistry } from "@/server/verification/registry";
@@ -38,7 +37,7 @@ let cached: Services | null = null;
 function build(): Services {
   const config = readConfig();
   const publicClient = config.monadRpcUrl
-    ? createPublicClient({ chain: monad, transport: http(config.monadRpcUrl), cacheTime: 0 }) // fresh head for confirmation counts
+    ? createMonadClient(config.monadRpcUrl)
     : null;
 
   return {
