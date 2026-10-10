@@ -7,7 +7,7 @@ import { monad } from "viem/chains";
  */
 export type ChainReader = Pick<
   PublicClient,
-  "getTransactionReceipt" | "getBlockNumber" | "getLogs" | "getChainId" | "getCode" | "readContract"
+  "getTransactionReceipt" | "getBlockNumber" | "getBlock" | "getLogs" | "getChainId" | "getCode" | "readContract"
 >;
 
 /**

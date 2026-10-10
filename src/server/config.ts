@@ -18,7 +18,27 @@ export type ServerConfig = {
   paymentsDeployBlock: bigint | null;
   /** Bearer secret for the scheduled indexer endpoint (32+ chars). */
   cronSecret: string | null;
+  /**
+   * Operator kill switch (PAYMENTS_PAUSED=true): no new registration or payment
+   * instructions are issued. Verification of transactions already sent continues.
+   */
+  paymentsPaused: boolean;
+  indexer: {
+    /** Largest eth_getLogs block range per call. The Monad Foundation public RPC allows 100. */
+    maxBlockRange: bigint;
+    /** getLogs calls per run for new blocks, so one run stays within serverless time limits. */
+    maxChunksPerRun: number;
+    /** Blocks behind the cursor re-scanned every run, to recover events missed during outages. */
+    reconcileBlocks: bigint;
+  };
+  /** Optional HTTPS endpoint that receives JSON alerts for unexpected errors and indexer failures. */
+  alertWebhookUrl: string | null;
 };
+
+function readInt(env: NodeJS.ProcessEnv, key: string, fallback: number, min: number, max: number) {
+  const value = Number.parseInt(env[key]?.trim() ?? "", 10);
+  return Number.isInteger(value) && value >= min && value <= max ? value : fallback;
+}
 
 function read(env: NodeJS.ProcessEnv, key: string) {
   const value = env[key]?.trim();
@@ -51,5 +71,15 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     paymentConfirmations: Number.isInteger(confirmations) && confirmations >= 1 && confirmations <= 100 ? confirmations : 2,
     paymentsDeployBlock: deployBlock && /^\d+$/.test(deployBlock) ? BigInt(deployBlock) : null,
     cronSecret: cron && cron.length >= 32 ? cron : null,
+    paymentsPaused: read(env, "PAYMENTS_PAUSED")?.toLowerCase() === "true",
+    indexer: {
+      maxBlockRange: BigInt(readInt(env, "INDEXER_MAX_BLOCK_RANGE", 100, 1, 10_000)),
+      maxChunksPerRun: readInt(env, "INDEXER_MAX_CHUNKS_PER_RUN", 50, 1, 1_000),
+      reconcileBlocks: BigInt(readInt(env, "INDEXER_RECONCILE_BLOCKS", 500, 0, 100_000)),
+    },
+    alertWebhookUrl: (() => {
+      const url = read(env, "ALERT_WEBHOOK_URL");
+      return url && url.startsWith("https://") ? url : null;
+    })(),
   };
 }

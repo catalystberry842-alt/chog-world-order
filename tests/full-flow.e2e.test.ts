@@ -4,7 +4,7 @@
  * Skipped unless ANVIL_RPC_URL is set:
  *
  *   npm run contracts:build
- *   anvil --chain-id 143 &
+ *   anvil --chain-id 143 --slots-in-an-epoch 1 &   # finalized = latest - 2, like Monad
  *   ANVIL_RPC_URL=http://127.0.0.1:8545 npx vitest run tests/full-flow.e2e.test.ts
  *
  * The chain is local and the wallets are generated per run; nothing touches Monad.
@@ -59,12 +59,17 @@ const proposal = "I have written invariant suites for two AMMs and can deliver h
 
 const createLocalClient = () => createPublicClient({ chain: localMonad, transport: http(rpc), cacheTime: 0 });
 
-describe.skipIf(!rpc)("campaign to payment to Passport, end to end", () => {
+describe.skipIf(!rpc)("campaign to payment to Passport, end to end", { timeout: 120_000 }, () => {
   let publicClient: ReturnType<typeof createLocalClient>;
   const wallet = (account: PrivateKeyAccount) => createWalletClient({ account, chain: localMonad, transport: http(rpc) });
   const fund = (address: Address) =>
     publicClient.request({ method: "anvil_setBalance" as never, params: [address, `0x${parseEther("1000").toString(16)}`] as never });
-  const mined = async (hash: Hex) => publicClient.waitForTransactionReceipt({ hash });
+  /** Waits for the receipt, then mines the 2 blocks Monad needs for full finality (anvil --slots-in-an-epoch 1). */
+  const mined = async (hash: Hex) => {
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    await publicClient.request({ method: "anvil_mine" as never, params: ["0x2"] as never });
+    return receipt;
+  };
 
   let contract: Address;
   let services: ReturnType<typeof makeServices>;

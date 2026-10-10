@@ -4,9 +4,11 @@ test = "test"
 script = "script"
 out = "out"
 libs = ["lib"]
-# Pinned compiler. Monad is EVM-compatible up to the Prague hard fork.
+# Pinned compiler and EVM target. The runtime bytecode is identical for shanghai, cancun and prague
+# (the contract uses no Cancun/Prague opcodes), so cancun is pinned as the conservative target.
+# Changing any setting in this profile changes the bytecode that must be verified.
 solc_version = "0.8.28"
-evm_version = "prague"
+evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
 bytecode_hash = "none"

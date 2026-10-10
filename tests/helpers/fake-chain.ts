@@ -44,6 +44,12 @@ export class FakeChain {
   failNextCalls = 0;
   /** Set false to simulate a configured address that holds some other contract. */
   isCampaignPayments = true;
+  /** How far the `finalized` head trails `latest` (Monad: 2 slots). 0 keeps depth-only tests simple. */
+  finalizedLag = 0;
+  /** Like a real RPC's eth_getLogs block-range cap (the Monad Foundation public RPC allows 100). */
+  maxLogRange: bigint | null = null;
+  /** eth_getLogs calls made, to check the indexer's chunking. */
+  logCalls: { fromBlock: bigint; toBlock: bigint }[] = [];
 
   constructor(readonly contract: Address) {
     this.code[contract.toLowerCase()] = "0x6080";
@@ -119,6 +125,12 @@ export class FakeChain {
         this.maybeFail();
         return this.head;
       }) as ChainReader["getBlockNumber"],
+      getBlock: (async ({ blockTag }: { blockTag?: string } = {}) => {
+        this.maybeFail();
+        if (blockTag !== "finalized") throw new Error(`unexpected getBlock ${blockTag}`);
+        const finalized = this.head - BigInt(this.finalizedLag);
+        return { number: finalized < BigInt(0) ? BigInt(0) : finalized };
+      }) as unknown as ChainReader["getBlock"],
       getCode: (async ({ address }: { address: Address }) => {
         this.maybeFail();
         return this.code[address.toLowerCase()];
@@ -132,6 +144,10 @@ export class FakeChain {
       getLogs: (async (params: { address: Address; fromBlock: bigint; toBlock: bigint | "latest"; args?: { campaignId?: Hex } }) => {
         this.maybeFail();
         const to = params.toBlock === "latest" ? this.head : params.toBlock;
+        this.logCalls.push({ fromBlock: params.fromBlock, toBlock: to });
+        if (this.maxLogRange !== null && to - params.fromBlock + BigInt(1) > this.maxLogRange) {
+          throw new Error(`eth_getLogs range exceeds ${this.maxLogRange} blocks`);
+        }
         return this.logs.filter(
           (log) =>
             log.address === params.address.toLowerCase() &&
@@ -140,12 +156,24 @@ export class FakeChain {
             (!params.args?.campaignId || log.topics[1]?.toLowerCase() === params.args.campaignId.toLowerCase()),
         );
       }) as unknown as ChainReader["getLogs"],
-      readContract: (async ({ address, functionName, args }: { address: Address; functionName: string; args: [Address, Hex?] }) => {
+      readContract: (async ({ address, functionName, args, blockNumber }: { address: Address; functionName: string; args: [Address, Hex?]; blockNumber?: bigint }) => {
         this.maybeFail();
         if (!this.isCampaignPayments) throw new Error("execution reverted");
         if (functionName === "isSupportedToken") return this.supportedTokens.has(args[0].toLowerCase());
         // Like the contract: keccak256(abi.encode(block.chainid, address(this), owner, salt)).
         if (functionName === "computeCampaignId") return computeCampaignId(address, args[0], args[1]!, this.chainId);
+        if (functionName === "campaignOwner") {
+          // Contract state at `blockNumber`: the owner from the first CampaignRegistered log for this ID.
+          const at = blockNumber ?? this.head;
+          const registered = this.logs.find(
+            (log) =>
+              log.address === address.toLowerCase() &&
+              log.blockNumber <= at &&
+              log.topics[1]?.toLowerCase() === (args[0] as string).toLowerCase() &&
+              log.topics[0] === encodeEventTopics({ abi: campaignPaymentsAbi, eventName: "CampaignRegistered" })[0],
+          );
+          return registered ? (`0x${registered.topics[2]!.slice(26)}` as Address) : "0x0000000000000000000000000000000000000000";
+        }
         throw new Error(`unexpected readContract ${functionName}`);
       }) as unknown as ChainReader["readContract"],
     };

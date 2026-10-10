@@ -50,3 +50,9 @@ next-env.d.ts
 /contracts/out/
 /contracts/cache/
 /contracts/broadcast/
+
+# deployment keys and keystores must never be committed
+*.key
+*keystore*
+*.keystore.json
+/secrets/

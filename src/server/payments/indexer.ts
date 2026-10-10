@@ -2,14 +2,10 @@ import type { Log } from "viem";
 import { campaignPaymentsAbi } from "@/lib/contracts/campaign-payments";
 import type { ChainReader } from "@/server/payments/chain";
 import { applyPaymentEvent, applyRegistrationEvent } from "@/server/payments/service";
-import { assertPaymentsContract, decodeContractEvents, eventArgs } from "@/server/payments/verify";
+import { assertPaymentsContract, confirmedHead, decodeContractEvents, eventArgs } from "@/server/payments/verify";
 import type { Services } from "@/server/services";
 
-const CURSOR_KEY = "campaign-payments";
-/** Blocks re-scanned on every run, so events missed during an outage or reorg are picked up. */
-export const RECONCILE_WINDOW = BigInt(500);
-/** Largest block range requested per getLogs call. */
-export const MAX_RANGE = BigInt(2_000);
+export const CURSOR_KEY = "campaign-payments";
 
 const contractEvents = campaignPaymentsAbi.filter(
   (item) => item.type === "event" && (item.name === "CampaignRegistered" || item.name === "CreatorPaid"),
@@ -23,24 +19,32 @@ export type IndexerResult =
       fromBlock: string;
       toBlock: string;
       cursor: string;
+      /** Blocks between the cursor and the confirmed head still to index. */
+      lagBlocks: string;
       eventsSeen: number;
       eventsNew: number;
       outcomes: Record<string, number>;
       caughtUp: boolean;
     };
 
+const min = (a: bigint, b: bigint) => (a < b ? a : b);
+const max = (a: bigint, b: bigint) => (a > b ? a : b);
+
 /**
  * Indexes CampaignRegistered and CreatorPaid events, then applies them.
  *
- * - Only blocks with the configured number of confirmations are read, so
- *   every applied event already satisfies the confirmation policy.
- * - Each run re-scans the last RECONCILE_WINDOW blocks; raw events are unique
- *   per (chain, tx, log index), so re-processing is harmless.
- * - On any RPC error the cursor is not advanced: the next run retries the
- *   same range. Safe to run after restarts and concurrently with on-demand
- *   verification, because every write is conditional or unique.
+ * - Only blocks at or below the confirmed head are read: the configured depth
+ *   and Monad's `finalized` tag must both cover them.
+ * - Logs are requested in chunks of at most `INDEXER_MAX_BLOCK_RANGE` blocks
+ *   (the Monad Foundation public RPC allows 100) and the cursor is saved after
+ *   every chunk, so a long backlog is worked through across runs.
+ * - Each run first re-scans the last `INDEXER_RECONCILE_BLOCKS` blocks behind
+ *   the cursor, so events missed during an outage are picked up. Raw events are
+ *   unique per (chain, tx, log index) and every write is conditional, so
+ *   re-processing is harmless and runs may overlap with on-demand verification.
+ * - On an RPC error the run stops; the cursor keeps the last completed chunk.
  */
-export async function runIndexer(services: Services, options: { maxRange?: bigint } = {}): Promise<IndexerResult> {
+export async function runIndexer(services: Services): Promise<IndexerResult> {
   const contract = services.config.paymentsContract;
   if (!contract.enabled) return { status: "unavailable", reason: contract.reason };
   if (!services.payments || !services.collabs) return { status: "unavailable", reason: "No database configured." };
@@ -51,33 +55,25 @@ export async function runIndexer(services: Services, options: { maxRange?: bigin
   }
   const chain: ChainReader = services.chain;
   const payments = services.payments;
-  const maxRange = options.maxRange ?? MAX_RANGE;
+  const { address, chainId } = contract;
+  const start = services.config.paymentsDeployBlock;
+  const { maxBlockRange, maxChunksPerRun, reconcileBlocks } = services.config.indexer;
 
-  const cursor = await payments.getCursor(CURSOR_KEY);
-  try {
-    await assertPaymentsContract(chain, contract.address);
+  const initialCursor = await payments.getCursor(CURSOR_KEY);
+  let cursor = initialCursor;
+  const outcomes: Record<string, number> = {};
+  let eventsSeen = 0;
+  let eventsNew = 0;
 
-    const head = await chain.getBlockNumber();
-    const confirmed = head - BigInt(services.config.paymentConfirmations - 1);
-    const start = services.config.paymentsDeployBlock;
-    let fromBlock = cursor === null ? start : cursor + BigInt(1) - RECONCILE_WINDOW;
-    if (fromBlock < start) fromBlock = start;
-    if (confirmed < fromBlock) {
-      return { status: "ok", fromBlock: fromBlock.toString(), toBlock: confirmed.toString(), cursor: (cursor ?? start).toString(), eventsSeen: 0, eventsNew: 0, outcomes: {}, caughtUp: true };
-    }
-    const toBlock = fromBlock + maxRange - BigInt(1) < confirmed ? fromBlock + maxRange - BigInt(1) : confirmed;
-
-    const logs = await chain.getLogs({ address: contract.address, events: contractEvents, fromBlock, toBlock });
-    const events = decodeContractEvents(logs as Log[], contract.address).sort((a, b) =>
+  async function scan(fromBlock: bigint, toBlock: bigint) {
+    const logs = await chain.getLogs({ address, events: contractEvents, fromBlock, toBlock });
+    const events = decodeContractEvents(logs as Log[], address).sort((a, b) =>
       a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1,
     );
-
-    const outcomes: Record<string, number> = {};
-    let eventsNew = 0;
     for (const event of events) {
       const recorded = await payments.recordChainEvent({
-        chainId: contract.chainId,
-        contractAddress: contract.address,
+        chainId,
+        contractAddress: address,
         eventName: event.name,
         txHash: event.txHash.toLowerCase(),
         logIndex: event.logIndex,
@@ -91,25 +87,89 @@ export async function runIndexer(services: Services, options: { maxRange?: bigin
       if (recorded.outcome === null) await payments.setChainEventOutcome(recorded.id, outcome);
       outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
     }
+    eventsSeen += events.length;
+  }
 
-    const nextCursor = cursor !== null && cursor > toBlock ? cursor : toBlock;
-    await payments.setCursor(CURSOR_KEY, nextCursor);
+  let firstBlock: bigint | null = null;
+  let lastBlock: bigint | null = null;
+  try {
+    await assertPaymentsContract(chain, address);
+    const { head: confirmed } = await confirmedHead(chain, services.config.paymentConfirmations);
+
+    // 1. Reconcile: re-scan recent blocks behind the cursor.
+    if (cursor !== null && reconcileBlocks > BigInt(0)) {
+      let from = max(start, cursor - reconcileBlocks + BigInt(1));
+      while (from <= cursor) {
+        const to = min(from + maxBlockRange - BigInt(1), cursor);
+        await scan(from, to);
+        firstBlock ??= from;
+        lastBlock = to;
+        from = to + BigInt(1);
+      }
+    }
+
+    // 2. Forward: new confirmed blocks, chunk by chunk, saving the cursor after each.
+    let from = cursor === null ? start : cursor + BigInt(1);
+    for (let chunk = 0; chunk < maxChunksPerRun && from <= confirmed; chunk += 1) {
+      const to = min(from + maxBlockRange - BigInt(1), confirmed);
+      await scan(from, to);
+      await payments.setCursor(CURSOR_KEY, to);
+      cursor = to;
+      firstBlock ??= from;
+      lastBlock = to;
+      from = to + BigInt(1);
+    }
+
+    const finalCursor = cursor ?? start - BigInt(1);
+    const lag = confirmed > finalCursor ? confirmed - finalCursor : BigInt(0);
     return {
       status: "ok",
-      fromBlock: fromBlock.toString(),
-      toBlock: toBlock.toString(),
-      cursor: nextCursor.toString(),
-      eventsSeen: events.length,
+      fromBlock: (firstBlock ?? from).toString(),
+      toBlock: (lastBlock ?? confirmed).toString(),
+      cursor: finalCursor.toString(),
+      lagBlocks: lag.toString(),
+      eventsSeen,
       eventsNew,
       outcomes,
-      caughtUp: toBlock === confirmed,
+      caughtUp: lag === BigInt(0),
     };
   } catch (error) {
-    // Cursor unchanged: the same range is retried next run.
+    // The cursor keeps the last completed chunk; the next run continues from there.
     return {
       status: "error",
       reason: error instanceof Error ? error.message : "Indexer failed.",
       cursor: cursor?.toString() ?? null,
+    };
+  }
+}
+
+/** Read-only indexer health for operators: cursor, heads, and lag. */
+export async function indexerStatus(services: Services) {
+  const contract = services.config.paymentsContract;
+  if (!contract.enabled || !services.payments || !services.chain || services.config.paymentsDeployBlock === null) {
+    return { status: "unavailable" as const, paymentsPaused: services.config.paymentsPaused };
+  }
+  const cursor = await services.payments.getCursor(CURSOR_KEY);
+  try {
+    await assertPaymentsContract(services.chain, contract.address);
+    const { latest, head } = await confirmedHead(services.chain, services.config.paymentConfirmations);
+    const indexedTo = cursor ?? services.config.paymentsDeployBlock - BigInt(1);
+    return {
+      status: "ok" as const,
+      paymentsPaused: services.config.paymentsPaused,
+      contract: contract.address,
+      deployBlock: services.config.paymentsDeployBlock.toString(),
+      cursor: cursor?.toString() ?? null,
+      latestBlock: latest.toString(),
+      confirmedHead: head.toString(),
+      lagBlocks: (head > indexedTo ? head - indexedTo : BigInt(0)).toString(),
+    };
+  } catch (error) {
+    return {
+      status: "error" as const,
+      paymentsPaused: services.config.paymentsPaused,
+      cursor: cursor?.toString() ?? null,
+      reason: error instanceof Error ? error.message : "Status check failed.",
     };
   }
 }

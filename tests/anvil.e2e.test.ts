@@ -3,7 +3,7 @@
  * chain. Skipped unless ANVIL_RPC_URL is set. Run with:
  *
  *   npm run contracts:build
- *   anvil --chain-id 143 &
+ *   anvil --chain-id 143 --slots-in-an-epoch 1 &   # finalized = latest - 2, like Monad
  *   ANVIL_RPC_URL=http://127.0.0.1:8545 npx vitest run tests/anvil.e2e.test.ts
  *
  * Nothing touches Monad: the chain is local and the wallets are generated
@@ -29,12 +29,19 @@ import type { ChainReader } from "@/server/payments/chain";
 import { makeServices, post, signInNewWallet } from "./helpers/setup";
 
 const rpc = process.env.ANVIL_RPC_URL;
+
+/** Waits for the receipt, then mines the 2 blocks Monad needs for full finality (anvil --slots-in-an-epoch 1). */
+async function finalized(client: { waitForTransactionReceipt: (args: { hash: Hex }) => Promise<unknown>; request: (args: never) => Promise<unknown> }, args: { hash: Hex }) {
+  const receipt = await client.waitForTransactionReceipt(args);
+  await client.request({ method: "anvil_mine", params: ["0x2"] } as never);
+  return receipt as Awaited<ReturnType<ReturnType<typeof createPublicClient>["waitForTransactionReceipt"]>>;
+}
 const localMonad = defineChain({ id: 143, name: "anvil (chain id 143)", nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 }, rpcUrls: { default: { http: [rpc ?? ""] } } });
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const body = async (response: Response) => ({ status: response.status, json: (await response.json()) as Json });
 
-describe.skipIf(!rpc)("CampaignPayments on anvil", () => {
+describe.skipIf(!rpc)("CampaignPayments on anvil", { timeout: 120_000 }, () => {
   it("registers through the real contract and rejects proofs that are not the expected payment", async () => {
     const publicClient = createPublicClient({ chain: localMonad, transport: http(rpc), cacheTime: 0 });
     const fund = (address: Address) =>
@@ -42,7 +49,7 @@ describe.skipIf(!rpc)("CampaignPayments on anvil", () => {
     const wallet = (account: PrivateKeyAccount) => createWalletClient({ account, chain: localMonad, transport: http(rpc) });
     const send = async (account: PrivateKeyAccount, call: Parameters<ReturnType<typeof wallet>["writeContract"]>[0]) => {
       const hash = await wallet(account).writeContract(call);
-      await publicClient.waitForTransactionReceipt({ hash });
+      await finalized(publicClient, { hash });
       return hash;
     };
 
@@ -52,7 +59,7 @@ describe.skipIf(!rpc)("CampaignPayments on anvil", () => {
     await fund(admin.address);
     const artifact = JSON.parse(readFileSync("contracts/out/CampaignPayments.sol/CampaignPayments.json", "utf8"));
     const deployHash = await wallet(admin).deployContract({ abi: campaignPaymentsAbi, bytecode: artifact.bytecode.object as Hex, args: [admin.address] });
-    const contract = (await publicClient.waitForTransactionReceipt({ hash: deployHash })).contractAddress!;
+    const contract = (await finalized(publicClient, { hash: deployHash })).contractAddress!;
 
     const services = makeServices({ paymentsContract: contract, chain: publicClient as unknown as ChainReader, confirmations: 1 });
     const owner = await signInNewWallet(services);
@@ -112,7 +119,7 @@ describe.skipIf(!rpc)("CampaignPayments on anvil", () => {
 
     // A wrong amount goes through on-chain (the contract does not know the budget) but the server rejects it.
     const wrongHash = await wallet(owner.account).writeContract({ address: contract, abi: campaignPaymentsAbi, functionName: "payNative", args: [campaignId, recipient, ref], value: BigInt(instructions.call.value) - BigInt(1), chain: localMonad, account: owner.account });
-    await publicClient.waitForTransactionReceipt({ hash: wrongHash });
+    await finalized(publicClient, { hash: wrongHash });
     expect(await report(wrongHash)).toMatchObject({ status: "mismatch", statusReason: expect.stringMatching(/base units instead of/) });
     expect(await runIndexer(services)).toMatchObject({ status: "ok" });
     expect((await services.paymentMemory.findPayment(instructions.payment.id))?.status).toBe("mismatch");
@@ -129,7 +136,7 @@ describe.skipIf(!rpc)("CampaignPayments on anvil", () => {
     await fund(admin.address);
     const artifact = JSON.parse(readFileSync("contracts/out/CampaignPayments.sol/CampaignPayments.json", "utf8"));
     const deployHash = await wallet(admin).deployContract({ abi: campaignPaymentsAbi, bytecode: artifact.bytecode.object as Hex, args: [admin.address] });
-    const deployReceipt = await publicClient.waitForTransactionReceipt({ hash: deployHash });
+    const deployReceipt = await finalized(publicClient, { hash: deployHash });
     const contract = deployReceipt.contractAddress!;
 
     const services = makeServices({ paymentsContract: contract, chain: publicClient as unknown as ChainReader, confirmations: 1 });
@@ -167,7 +174,7 @@ describe.skipIf(!rpc)("CampaignPayments on anvil", () => {
     ).json.campaign;
     const { registration } = (await body(await postPublish(post(`/api/campaigns/${campaign.id}/publish`, {}, { cookie: owner.cookie }), services, campaign.id))).json;
     const registerHash = await wallet(owner.account).writeContract({ address: contract, abi: campaignPaymentsAbi, functionName: "registerCampaign", args: [registration.salt], chain: localMonad, account: owner.account });
-    await publicClient.waitForTransactionReceipt({ hash: registerHash });
+    await finalized(publicClient, { hash: registerHash });
 
     // The browser never reports the hash: the indexer publishes the campaign.
     expect(await runIndexer(services)).toMatchObject({ status: "ok", outcomes: { registered: 1 } });
@@ -182,7 +189,7 @@ describe.skipIf(!rpc)("CampaignPayments on anvil", () => {
     const [campaignId, recipient, ref] = instructions.call.args as [Hex, Address, Hex];
     const before = await publicClient.getBalance({ address: creator.account.address });
     const payHash = await wallet(owner.account).writeContract({ address: contract, abi: campaignPaymentsAbi, functionName: "payNative", args: [campaignId, recipient, ref], value: BigInt(instructions.call.value), chain: localMonad, account: owner.account });
-    await publicClient.waitForTransactionReceipt({ hash: payHash });
+    await finalized(publicClient, { hash: payHash });
     expect((await publicClient.getBalance({ address: creator.account.address })) - before).toBe(parseEther("2.5"));
 
     const paid = (await body(await postPaymentTransaction(post(`/api/payments/${instructions.payment.id}/transaction`, { txHash: payHash }, { cookie: owner.cookie }), services, instructions.payment.id))).json.payment;

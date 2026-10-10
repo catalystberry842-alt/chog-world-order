@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { BaseError, erc20Abi, UserRejectedRequestError, zeroAddress, type Address, type Hash, type Hex } from "viem";
+import { BaseError, ContractFunctionRevertedError, erc20Abi, toFunctionSelector, UserRejectedRequestError, zeroAddress, type Address, type Hash, type Hex } from "viem";
 import { useConfig } from "wagmi";
 import { getConnection, getConnectorClient, switchChain, writeContract } from "wagmi/actions";
 import { readContract, waitForTransactionReceipt } from "viem/actions";
@@ -12,7 +12,7 @@ import { ApiError } from "@/lib/client/passport-api";
 import { collabsApi } from "@/lib/client/collabs-api";
 import { campaignPaymentsAbi, explorerTxUrl } from "@/lib/contracts/campaign-payments";
 import { formatTokenUnits } from "@/lib/collabs/rules";
-import type { CampaignView, PaymentStatus, PaymentView } from "@/lib/collabs/types";
+import type { CampaignView, PaymentInstructions, PaymentStatus, PaymentView } from "@/lib/collabs/types";
 import { shortAddress } from "@/lib/format";
 import { targetChain } from "@/lib/wagmi";
 
@@ -50,6 +50,36 @@ async function prepareWallet(config: WagmiConfig, expected: string, chainId: num
 // Campaign registration
 // ---------------------------------------------------------------------------
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Whether a wallet or simulation error is the contract reverting with `errorName`.
+ * Some wallets return the revert from gas estimation undecoded, so the error's
+ * 4-byte selector is matched as well as its decoded name.
+ */
+function isRevert(error: unknown, errorName: (typeof contractErrors)[number]) {
+  if (!(error instanceof BaseError)) return false;
+  if (error.walk((cause) => cause instanceof ContractFunctionRevertedError && cause.data?.errorName === errorName)) return true;
+  const item = campaignPaymentsAbi.find((entry) => entry.type === "error" && entry.name === errorName);
+  if (!item || item.type !== "error") return false;
+  const selector = toFunctionSelector(`${item.name}(${item.inputs.map((input) => input.type).join(",")})`).toLowerCase();
+  return `${error.message} ${error.details ?? ""}`.toLowerCase().includes(selector);
+}
+const contractErrors = ["CampaignAlreadyRegistered", "DeliverableAlreadyPaid"] as const;
+
+/**
+ * Asks the server to verify the registration until it leaves "pending" (about
+ * 90 seconds at most). The wallet returns the hash when the transaction is
+ * submitted, before it is included and finalized on Monad.
+ */
+async function verifyUntilSettled(campaignId: string, txHash?: string) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const { campaign } = await collabsApi.checkRegistration(campaignId, txHash);
+    if (campaign.registration.status !== "pending") return;
+    await sleep(3_000);
+  }
+}
+
 /**
  * Publishing a campaign with on-chain payments enabled: the owner's wallet
  * calls registerCampaign(salt), then the server verifies the event and
@@ -77,19 +107,28 @@ export function RegistrationPanel({ campaign, ownerAddress, onChanged }: { campa
       });
       if (registeredOwner !== zeroAddress) {
         setStep("verifying");
-        await collabsApi.checkRegistration(campaign.id);
+        await verifyUntilSettled(campaign.id);
         return;
       }
       setStep("wallet");
-      const hash = await writeContract(config, {
-        address: instructions.contractAddress as Address,
-        abi: campaignPaymentsAbi,
-        functionName: "registerCampaign",
-        args: [instructions.salt as Hex],
-        chainId: targetChain.id,
-      });
+      let hash: Hash;
+      try {
+        hash = await writeContract(config, {
+          address: instructions.contractAddress as Address,
+          abi: campaignPaymentsAbi,
+          functionName: "registerCampaign",
+          args: [instructions.salt as Hex],
+          chainId: targetChain.id,
+        });
+      } catch (error) {
+        // An earlier transaction landed between the check above and this one: it is registered.
+        if (!isRevert(error, "CampaignAlreadyRegistered")) throw error;
+        setStep("verifying");
+        await verifyUntilSettled(campaign.id);
+        return;
+      }
       setStep("verifying");
-      await collabsApi.checkRegistration(campaign.id, hash);
+      await verifyUntilSettled(campaign.id, hash);
     },
     onSettled: () => {
       setStep("idle");
@@ -188,6 +227,29 @@ function usePaymentStatus(paymentId: string | null, initial: PaymentView | null)
   return query.data ?? initial;
 }
 
+/** Sends the server-prepared payment call from the owner's wallet. Returns the transaction hash. */
+function sendPayment(config: WagmiConfig, call: NonNullable<PaymentInstructions["call"]>) {
+  if (call.functionName === "payNative") {
+    const [campaignId, creator, ref] = call.args;
+    return writeContract(config, {
+      address: call.address as Address,
+      abi: campaignPaymentsAbi,
+      functionName: "payNative",
+      args: [campaignId as Hex, creator as Address, ref as Hex],
+      value: BigInt(call.value),
+      chainId: targetChain.id,
+    });
+  }
+  const [campaignId, token, creator, amount, ref] = call.args;
+  return writeContract(config, {
+    address: call.address as Address,
+    abi: campaignPaymentsAbi,
+    functionName: "payToken",
+    args: [campaignId as Hex, token as Address, creator as Address, BigInt(amount), ref as Hex],
+    chainId: targetChain.id,
+  });
+}
+
 /** Status line shared by the owner and creator views. */
 export function PaymentSummary({ payment }: { payment: PaymentView }) {
   const amount = formatTokenUnits(payment.amount, { symbol: payment.token.symbol, decimals: payment.token.decimals });
@@ -272,25 +334,15 @@ export function PaymentPanel({
 
       setStep("wallet");
       let hash: Hash;
-      if (call.functionName === "payNative") {
-        const [campaignId, creator, ref] = call.args;
-        hash = await writeContract(config, {
-          address: call.address as Address,
-          abi: campaignPaymentsAbi,
-          functionName: "payNative",
-          args: [campaignId as Hex, creator as Address, ref as Hex],
-          value: BigInt(call.value),
-          chainId: targetChain.id,
-        });
-      } else {
-        const [campaignId, token, creator, amount, ref] = call.args;
-        hash = await writeContract(config, {
-          address: call.address as Address,
-          abi: campaignPaymentsAbi,
-          functionName: "payToken",
-          args: [campaignId as Hex, token as Address, creator as Address, BigInt(amount), ref as Hex],
-          chainId: targetChain.id,
-        });
+      try {
+        hash = await sendPayment(config, call);
+      } catch (error) {
+        if (isRevert(error, "DeliverableAlreadyPaid")) {
+          throw new Error(
+            "This deliverable was already paid on-chain by an earlier transaction. No new payment was sent; it will show as paid once Chog World Order verifies that transaction (usually within a few minutes).",
+          );
+        }
+        throw error;
       }
       setStep("verifying");
       const reported = await collabsApi.reportPayment(instructions.payment.id, hash);

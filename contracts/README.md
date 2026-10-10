@@ -72,7 +72,7 @@ event SupportedTokenUpdated(address indexed token, bool supported);
 | Component | Version |
 | --- | --- |
 | Solidity compiler | 0.8.28 (`solc-static-linux`, commit 7893614a) |
-| EVM version | prague |
+| EVM version | cancun (runtime bytecode is identical for shanghai, cancun and prague) |
 | Foundry (forge) | 1.5.1-stable (b0a9dd9c) |
 | OpenZeppelin Contracts | v5.6.1 (5fd1781b), git submodule |
 | forge-std | v1.16.2 (bf647bd6), git submodule |

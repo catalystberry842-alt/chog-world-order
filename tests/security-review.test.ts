@@ -289,7 +289,7 @@ describe("collab board deadlines (fixed)", () => {
     chain.failNextCalls = 5;
     const checked = await body(await postRegistration(post(`/api/campaigns/${draft.id}/registration`, {}, { cookie: owner.cookie }), services, draft.id));
     expect(checked.status).toBe(200);
-    expect(checked.json.campaign.registration).toMatchObject({ status: "pending", error: expect.stringMatching(/Could not search Monad/) });
+    expect(checked.json.campaign.registration).toMatchObject({ status: "pending", error: expect.stringMatching(/Could not reach Monad/) });
   });
 });
 

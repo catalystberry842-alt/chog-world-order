@@ -35,6 +35,15 @@ Without a database, the Collab Board shows sample campaigns from `src/lib/mock/`
 | Tests | Vitest 5 |
 | Contracts | Solidity 0.8.28, Foundry 1.5, OpenZeppelin Contracts 5.6 (git submodules in `contracts/lib`) |
 
+## Mainnet release
+
+Nothing is deployed. The release is prepared in [`docs/release/`](docs/release/):
+
+- [`DEPLOYMENT.md`](docs/release/DEPLOYMENT.md): step-by-step deployment, contract verification, production configuration, database migration and backups, monitoring, checklists.
+- [`RUNBOOK.md`](docs/release/RUNBOOK.md): pausing payments, disabling a token, incident response, rollback.
+- [`RISKS.md`](docs/release/RISKS.md): outstanding risks, including the external audit that blocks deployment.
+- [`production.env.template`](docs/release/production.env.template): every production variable with placeholders.
+
 ## Requirements
 
 - Node.js 22 or newer
@@ -66,6 +75,9 @@ The app runs without any configuration. Without a database, the Passport API ans
    | `PAYMENT_CONFIRMATIONS` | Registration and payments | Blocks required before an event counts. Default `2` |
    | `CRON_SECRET` | Indexer endpoint | 32+ random characters. Schedulers call `/api/indexer/run` with `Authorization: Bearer <CRON_SECRET>` |
    | `NEXT_PUBLIC_USDC_ADDRESS` | USDC campaigns | Monad USDC token address. Empty: only MON budgets are offered. The token must also be allowed in the contract with `setSupportedToken` |
+   | `PAYMENTS_PAUSED` | Operations | `true` stops new registration and payment instructions; verification of sent transactions continues |
+   | `INDEXER_MAX_BLOCK_RANGE`, `INDEXER_MAX_CHUNKS_PER_RUN`, `INDEXER_RECONCILE_BLOCKS` | Indexer | Defaults 100 / 50 / 500. Keep the range within your RPC's `eth_getLogs` limit (100 on the Monad Foundation public RPC) |
+   | `ALERT_WEBHOOK_URL` | Operations | Optional https webhook for unexpected errors and indexer failures |
 
    Next.js reads `.env*` files; the Prisma CLI reads `.env` through `prisma.config.ts`.
 

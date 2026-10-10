@@ -27,6 +27,9 @@ export const testConfig: ServerConfig = {
   paymentConfirmations: 2,
   paymentsDeployBlock: null,
   cronSecret: "test-cron-secret-test-cron-secret-0123",
+  paymentsPaused: false,
+  indexer: { maxBlockRange: BigInt(2_000), maxChunksPerRun: 50, reconcileBlocks: BigInt(500) },
+  alertWebhookUrl: null,
 };
 
 export function makeServices(

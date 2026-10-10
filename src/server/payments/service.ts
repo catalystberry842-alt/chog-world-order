@@ -1,4 +1,4 @@
-import { type Address, type Hex } from "viem";
+import { zeroAddress, type Address, type Hex } from "viem";
 import {
   campaignPaymentsAbi,
   campaignSalt,
@@ -20,9 +20,8 @@ import {
   checkPaymentTx,
   eventArgs,
   checkRegistrationTx,
-  findRegistrationEvent,
   paymentMismatch,
-  registrationDepth,
+  registeredOwner,
   type PaymentEvent,
   type RegistrationEvent,
   type TxCheck,
@@ -35,6 +34,13 @@ export { toPaymentView };
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
+
+/** Operator kill switch: refuse new on-chain instructions. Verification of sent transactions continues. */
+function assertNotPaused(services: Services) {
+  if (services.config.paymentsPaused) {
+    throw serviceUnavailable("On-chain registration and payments are paused by the operators. Please try again later.", "payments_paused");
+  }
+}
 
 export function paymentsSetup(services: Services) {
   const contract = services.config.paymentsContract;
@@ -79,6 +85,7 @@ async function verifiedContract(services: Services, contract: Address) {
  */
 export async function startRegistration(services: Services, auth: AuthContext, campaign: CampaignWithCounts) {
   const { contract } = paymentsSetup(services);
+  assertNotPaused(services);
   await verifiedContract(services, contract);
   const collabs = requireCollabs(services);
   const salt = campaignSalt(campaign.id);
@@ -108,7 +115,7 @@ export async function startRegistration(services: Services, auth: AuthContext, c
  * longer publishable, it stays a draft with the problems listed; the on-chain
  * registration remains valid, so publishing again after fixing them works.
  */
-async function publishRegistered(services: Services, campaign: CampaignWithCounts, event: RegistrationEvent) {
+async function publishRegistered(services: Services, campaign: CampaignWithCounts, verifiedTxHash: string | null) {
   const collabs = requireCollabs(services);
   const now = services.now();
   // Validate the current row, not the caller's snapshot, which may predate an edit.
@@ -117,7 +124,7 @@ async function publishRegistered(services: Services, campaign: CampaignWithCount
   if (problems.length > 0) {
     await collabs.updateCampaignIfStatus(campaign.id, "draft", {
       registrationStatus: "failed",
-      registrationTxHash: event.txHash,
+      registrationTxHash: verifiedTxHash,
       registrationError: `Registered on Monad, but not published: ${problems.join(" ")} Fix the draft and publish again.`,
     });
     return false;
@@ -127,7 +134,7 @@ async function publishRegistered(services: Services, campaign: CampaignWithCount
     publishedAt: now,
     registrationStatus: "confirmed",
     registeredAt: now,
-    registrationTxHash: event.txHash,
+    registrationTxHash: verifiedTxHash,
     registrationError: null,
   });
   return true;
@@ -149,7 +156,7 @@ async function applyRegistrationCheck(services: Services, campaign: CampaignWith
       args: eventArgs(event),
     });
     if (recorded.outcome === null) await store.setChainEventOutcome(recorded.id, "registered");
-    return publishRegistered(services, campaign, event);
+    return publishRegistered(services, campaign, event.txHash);
   }
   if (check.kind === "pending") {
     await collabs.updateCampaignIfStatus(campaign.id, "draft", {
@@ -191,20 +198,23 @@ export async function confirmRegistration(services: Services, auth: AuthContext,
     const check = await checkRegistrationTx(chain, contract, { chainCampaignId: campaign.chainCampaignId, owner }, txHash, minConfirmations);
     return applyRegistrationCheck(services, campaign, check, txHash);
   }
-  let event: RegistrationEvent | null;
+  // No hash (tab closed mid-transaction): read who owns the campaign ID in contract state.
+  let owners: Awaited<ReturnType<typeof registeredOwner>>;
   try {
-    event = await findRegistrationEvent(chain, contract, campaign.chainCampaignId as Hex, services.config.paymentsDeployBlock ?? BigInt(0));
+    owners = await registeredOwner(chain, contract, campaign.chainCampaignId as Hex, minConfirmations);
   } catch {
-    // RPC down or log range refused: nothing is decided, the owner (or the indexer) retries.
-    return applyRegistrationCheck(services, campaign, { kind: "pending", reason: "Could not search Monad for the registration right now. Try again shortly." });
+    // RPC down: nothing is decided; the owner (or the indexer) retries.
+    return applyRegistrationCheck(services, campaign, { kind: "pending", reason: "Could not reach Monad to check the registration right now. Try again shortly." });
   }
-  if (!event) {
-    return applyRegistrationCheck(services, campaign, { kind: "pending", reason: "No registration found on Monad yet." });
+  if (owners.confirmed === zeroAddress) {
+    const reason = owners.latest === zeroAddress ? "No registration found on Monad yet." : "Registered on Monad. Waiting for the block to be finalized.";
+    return applyRegistrationCheck(services, campaign, { kind: "pending", reason });
   }
-  if (!sameAddress(event.owner, owner)) {
+  if (!sameAddress(owners.confirmed, owner)) {
     return applyRegistrationCheck(services, campaign, { kind: "failed", reason: "Registered by a different wallet." });
   }
-  return applyRegistrationCheck(services, campaign, await registrationDepth(chain, event, minConfirmations));
+  // Confirmed from finalized contract state. The transaction hash is filled in when the indexer sees the event.
+  await publishRegistered(services, campaign, null);
 }
 
 /** Indexer: a confirmed-depth CampaignRegistered event. Returns what happened, for the event log. */
@@ -213,11 +223,18 @@ export async function applyRegistrationEvent(services: Services, event: Registra
   const store = requireStore(services);
   const campaign = await collabs.findCampaignByChainId(event.campaignId);
   if (!campaign) return "unmatched";
-  if (campaign.registrationStatus === "confirmed") return "duplicate";
+  if (campaign.registrationStatus === "confirmed") {
+    // Confirmed earlier from contract state: record the now-verified transaction hash.
+    if (!campaign.registrationTxHash) {
+      await collabs.updateCampaignIfStatus(campaign.id, campaign.status, { registrationTxHash: event.txHash.toLowerCase() });
+      return "registered-hash-recorded";
+    }
+    return "duplicate";
+  }
   const owner = await store.findUserById(campaign.ownerId);
   if (!owner || !sameAddress(owner.address, event.owner)) return "owner-mismatch";
   if (campaign.status !== "draft") return "ignored";
-  return (await publishRegistered(services, campaign, event)) ? "registered" : "registered-not-publishable";
+  return (await publishRegistered(services, campaign, event.txHash)) ? "registered" : "registered-not-publishable";
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +259,7 @@ async function ownerContext(services: Services, auth: AuthContext, deliverableId
  */
 export async function preparePayment(services: Services, auth: AuthContext, deliverableId: string): Promise<PaymentInstructions> {
   const { contract, store: payments } = paymentsSetup(services);
+  assertNotPaused(services);
   const passports = requireStore(services);
   const { deliverable, campaign } = await ownerContext(services, auth, deliverableId);
   if (deliverable.status !== "accepted") throw conflict("not_accepted", "Only accepted deliverables can be paid.");
@@ -423,7 +441,7 @@ export async function applyPaymentEvent(services: Services, event: PaymentEvent)
   const mismatch = paymentMismatch(payment, event);
   const check: TxCheck<PaymentEvent> = mismatch
     ? { kind: "mismatch", reason: mismatch, event }
-    : { kind: "confirmed", event, confirmations: BigInt(0) };
+    : { kind: "confirmed", event };
   const updated = await applyPaymentCheck(payments, payment, check, services.now());
   return updated?.status === "confirmed" ? "confirmed-payment" : mismatch ? "mismatch" : "not-applied";
 }

@@ -35,7 +35,8 @@ import {
   preparePayment,
   reportPaymentTransaction,
 } from "@/server/payments/service";
-import { runIndexer } from "@/server/payments/indexer";
+import { indexerStatus, runIndexer } from "@/server/payments/indexer";
+import { alert, log } from "@/server/log";
 import { getCampaign as readCampaign } from "@/server/collabs/service";
 import { timingSafeEqual } from "node:crypto";
 import { HttpError } from "@/server/errors";
@@ -167,16 +168,31 @@ export const getPayment = (request: Request, services: Services, paymentId: stri
     return json({ payment: await getPaymentStatus(services, auth, paymentId) });
   });
 
-/** Scheduled indexer run. Requires `Authorization: Bearer <CRON_SECRET>`. */
+/** Operator endpoints require `Authorization: Bearer <CRON_SECRET>`, compared in constant time. */
+function requireOperator(request: Request, services: Services) {
+  const secret = services.config.cronSecret;
+  if (!secret) throw new HttpError(503, "not_configured", "CRON_SECRET is not configured.");
+  const given = Buffer.from(request.headers.get("authorization") ?? "");
+  const expected = Buffer.from(`Bearer ${secret}`);
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+    throw new HttpError(401, "unauthorized", "Missing or invalid indexer credentials.");
+  }
+}
+
+/** Scheduled indexer run. Logs every run; alerts operators when a run fails. */
 export const runIndexerRequest = (request: Request, services: Services) =>
   handle(async () => {
-    const secret = services.config.cronSecret;
-    if (!secret) throw new HttpError(503, "not_configured", "CRON_SECRET is not configured.");
-    const given = Buffer.from(request.headers.get("authorization") ?? "");
-    const expected = Buffer.from(`Bearer ${secret}`);
-    if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
-      throw new HttpError(401, "unauthorized", "Missing or invalid indexer credentials.");
-    }
+    requireOperator(request, services);
     const result = await runIndexer(services);
+    if (result.status === "error") await alert("indexer.run_failed", new Error(result.reason), { cursor: result.cursor });
+    else log(result.status === "ok" ? "info" : "warn", "indexer.run", result);
     return json(result, { status: result.status === "error" ? 502 : result.status === "unavailable" ? 503 : 200 });
+  });
+
+/** Indexer health for operators and uptime monitors: cursor, heads, lag, pause state. */
+export const getIndexerStatus = (request: Request, services: Services) =>
+  handle(async () => {
+    requireOperator(request, services);
+    const status = await indexerStatus(services);
+    return json(status, { status: status.status === "ok" ? 200 : status.status === "unavailable" ? 503 : 502 });
   });

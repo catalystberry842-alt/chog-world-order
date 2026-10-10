@@ -63,7 +63,7 @@ export function paymentMismatch(expected: PaymentRecord, event: PaymentEvent): s
 }
 
 export type TxCheck<T> =
-  | { kind: "confirmed"; event: T; confirmations: bigint }
+  | { kind: "confirmed"; event: T }
   | { kind: "pending"; reason: string; event?: T }
   | { kind: "failed"; reason: string }
   | { kind: "mismatch"; reason: string; event: T };
@@ -141,9 +141,26 @@ async function confirmedReceipt(chain: ChainReader, contract: Address, txHash: s
   return { receipt, events: decodeContractEvents(receipt.logs as Log[], contract) };
 }
 
-async function confirmationsOf(chain: ChainReader, blockNumber: bigint) {
-  const head = await chain.getBlockNumber();
-  return head >= blockNumber ? head - blockNumber + BigInt(1) : BigInt(0);
+/**
+ * The highest block whose events count: at least `minConfirmations` deep
+ * from `latest`, and not above Monad's `finalized` head. On Monad, `latest`
+ * is a proposed block; full finality comes two slots later.
+ */
+export async function confirmedHead(chain: ChainReader, minConfirmations: number) {
+  const [latest, finalized] = await Promise.all([chain.getBlockNumber(), chain.getBlock({ blockTag: "finalized" })]);
+  const byDepth = latest - BigInt(minConfirmations - 1);
+  const head = finalized.number !== null && finalized.number < byDepth ? finalized.number : byDepth;
+  return { latest, head };
+}
+
+/** Null when the block counts, otherwise why it does not count yet. */
+async function waitReason(chain: ChainReader, blockNumber: bigint, minConfirmations: number) {
+  const { latest, head } = await confirmedHead(chain, minConfirmations);
+  if (blockNumber <= head) return null;
+  const confirmations = latest >= blockNumber ? latest - blockNumber + BigInt(1) : BigInt(0);
+  return confirmations < BigInt(minConfirmations)
+    ? `Waiting for confirmations (${confirmations}/${minConfirmations}).`
+    : "Waiting for Monad to finalize the block.";
 }
 
 /**
@@ -168,14 +185,13 @@ export async function checkPaymentTx(
   );
   if (!event) return { kind: "failed", reason: "The transaction has no CreatorPaid event for this deliverable." };
   const mismatch = paymentMismatch(expected, event);
-  const confirmations = await confirmationsOf(chain, event.blockNumber);
   // Nothing is decided on a block that could still be reorganised away, not even a mismatch.
-  if (confirmations < BigInt(minConfirmations)) {
-    const waiting = `Waiting for confirmations (${confirmations}/${minConfirmations}).`;
+  const waiting = await waitReason(chain, event.blockNumber, minConfirmations);
+  if (waiting) {
     return mismatch ? { kind: "pending", reason: `${waiting} The event does not match the expected payment yet: ${mismatch}` } : { kind: "pending", reason: waiting, event };
   }
   if (mismatch) return { kind: "mismatch", reason: mismatch, event };
-  return { kind: "confirmed", event, confirmations };
+  return { kind: "confirmed", event };
 }
 
 /** Verifies a registration transaction for the expected campaign ID and owner. */
@@ -202,35 +218,26 @@ export async function checkRegistrationTx(
 }
 
 async function verifyDepth<T extends LogPosition>(chain: ChainReader, event: T, minConfirmations: number): Promise<TxCheck<T>> {
-  const confirmations = await confirmationsOf(chain, event.blockNumber);
-  if (confirmations < BigInt(minConfirmations)) {
-    return { kind: "pending", reason: `Waiting for confirmations (${confirmations}/${minConfirmations}).`, event };
-  }
-  return { kind: "confirmed", event, confirmations };
+  const waiting = await waitReason(chain, event.blockNumber, minConfirmations);
+  return waiting ? { kind: "pending", reason: waiting, event } : { kind: "confirmed", event };
 }
 
-/** Looks up a CampaignRegistered event by campaign ID (for interrupted registrations). */
-export async function findRegistrationEvent(
-  chain: ChainReader,
-  contract: Address,
-  chainCampaignId: Hex,
-  fromBlock: bigint,
-): Promise<RegistrationEvent | null> {
-  await assertPaymentsChain(chain);
-  const logs = await chain.getLogs({
-    address: contract,
-    event: campaignPaymentsAbi.find((item) => item.type === "event" && item.name === "CampaignRegistered") as Extract<
-      (typeof campaignPaymentsAbi)[number],
-      { type: "event"; name: "CampaignRegistered" }
-    >,
-    args: { campaignId: chainCampaignId },
-    fromBlock,
-    toBlock: "latest",
-  });
-  const events = decodeContractEvents(logs as Log[], contract);
-  return (events.find((event) => event.name === "CampaignRegistered") as RegistrationEvent | undefined) ?? null;
-}
-
-export async function registrationDepth(chain: ChainReader, event: RegistrationEvent, minConfirmations: number) {
-  return verifyDepth(chain, event, minConfirmations);
+/**
+ * Who registered a campaign ID, read from contract state at the confirmed
+ * head and at `latest`, for interrupted registrations where the browser never
+ * reported a transaction hash. A state read needs no log-range scan, which
+ * public Monad RPCs limit to about 100 blocks per call.
+ */
+export async function registeredOwner(chain: ChainReader, contract: Address, chainCampaignId: Hex, minConfirmations: number) {
+  const { head } = await confirmedHead(chain, minConfirmations);
+  const read = (blockNumber?: bigint) =>
+    chain.readContract({
+      address: contract,
+      abi: campaignPaymentsAbi,
+      functionName: "campaignOwner",
+      args: [chainCampaignId],
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+  const [atConfirmedHead, atLatest] = await Promise.all([read(head), read()]);
+  return { confirmed: atConfirmedHead as Address, latest: atLatest as Address };
 }

@@ -1,6 +1,7 @@
 import { unstable_rethrow } from "next/navigation";
 import { z } from "zod";
 import { HttpError } from "@/server/errors";
+import { alert } from "@/server/log";
 
 const noStore = { "cache-control": "no-store" };
 
@@ -20,7 +21,7 @@ export async function handle(run: () => Promise<Response>): Promise<Response> {
     if (error instanceof HttpError) {
       return json({ error: { code: error.code, message: error.message } }, { status: error.status });
     }
-    console.error("[api] unexpected error", error);
+    await alert("api.unexpected_error", error);
     return json({ error: { code: "internal_error", message: "Something went wrong." } }, { status: 500 });
   }
 }
