@@ -68,9 +68,10 @@ export async function recalculateReputation(
 ) {
   const store = requireStore(services);
   const config = options.config ?? reputationConfig;
+  const account = await store.findUserById(userId);
 
   return store.updateLedger(userId, ({ ledger, verified }) => {
-    const plan = computeReputationPlan(userId, verified, config);
+    const plan = computeReputationPlan(userId, verified, config, account?.createdAt ?? null);
     const byId = new Map(ledger.map((event) => [event.id, event]));
     const writes: ReputationWrite[] = reconcileLedger(ledger.map(toLedger), plan).map((change) => {
       if (change.type === "reverse") {

@@ -134,7 +134,7 @@ export async function getPassport(services: Services, rawAddress: string, viewer
 // ---------------------------------------------------------------------------
 
 const earliestActivity = new Date("2025-01-01T00:00:00Z");
-/** Open claims per wallet, so one wallet cannot flood the review queue. */
+/** Open claims (pending or unavailable) per wallet, so one wallet cannot flood the database or the review queue. */
 export const MAX_PENDING_CLAIMS = 20;
 
 const endOfUtcDay = (date: Date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
@@ -155,9 +155,12 @@ export async function submitEvidence(services: Services, auth: AuthContext, clai
     throw badRequest("The activity date must be in the past and after January 2025.", "invalid_date");
   }
 
-  const open = await store.listEvidence({ userId: auth.user.id, status: "pending", limit: MAX_PENDING_CLAIMS });
-  if (open.length >= MAX_PENDING_CLAIMS) {
-    throw conflict("too_many_pending", `You have ${MAX_PENDING_CLAIMS} claims waiting for review. Wait for some to be reviewed first.`);
+  const [pending, unavailable] = await Promise.all([
+    store.listEvidence({ userId: auth.user.id, status: "pending", limit: MAX_PENDING_CLAIMS }),
+    store.listEvidence({ userId: auth.user.id, status: "unavailable", limit: MAX_PENDING_CLAIMS }),
+  ]);
+  if (pending.length + unavailable.length >= MAX_PENDING_CLAIMS) {
+    throw conflict("too_many_pending", `You have ${MAX_PENDING_CLAIMS} claims that are not verified yet. Wait for some to be reviewed or checked first.`);
   }
 
   // A transaction has exactly one sender, and only that wallet can ever verify it, so the

@@ -12,13 +12,9 @@ import {
 export type EngineEvidence = {
   id: string;
   kind: EvidenceKind;
-  /** When the activity happened, as claimed (or the block time on-chain). Shown, never used for limits. */
+  /** When the activity happened, as claimed (or the block time on-chain). */
   occurredAt: Date;
-  /**
-   * When the server verified it. Defines processing order and the daily, monthly,
-   * and weekly buckets: a client-chosen date could otherwise spread claims over
-   * past months to multiply the caps and consistency bonus.
-   */
+  /** When the server verified it. Defines processing order. */
   verifiedAt: Date;
 };
 
@@ -52,10 +48,26 @@ function monthOfIsoWeek(date: Date) {
  * record's points never depend on evidence verified after it. That makes
  * incremental issuance and full recalculation agree.
  */
+/**
+ * The date used for daily, monthly, and weekly buckets: the claimed date,
+ * clamped to [account creation, verification]. A client-chosen date therefore
+ * cannot spread claims over months before the account existed to multiply the
+ * caps and the consistency bonus, and slow reviews do not move work into a
+ * later bucket either.
+ */
+export function activityDate(evidence: EngineEvidence, notBefore: Date | null) {
+  let time = evidence.occurredAt.getTime();
+  if (notBefore && time < notBefore.getTime()) time = notBefore.getTime();
+  if (time > evidence.verifiedAt.getTime()) time = evidence.verifiedAt.getTime();
+  return new Date(time);
+}
+
 export function computeReputationPlan(
   userId: string,
   verified: EngineEvidence[],
   config: ReputationConfig = reputationConfig,
+  /** The account's creation time; activity is never counted earlier than this. */
+  notBefore: Date | null = null,
 ): PlannedEvent[] {
   const ordered = [...verified].sort(
     (a, b) => a.verifiedAt.getTime() - b.verifiedAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
@@ -70,8 +82,9 @@ export function computeReputationPlan(
   for (const evidence of ordered) {
     const category = categoryForEvidence[evidence.kind];
     const limits = config.limits[category];
-    const dKey = `${category}:${dayKey(evidence.verifiedAt)}`;
-    const mKey = `${category}:${monthKey(evidence.verifiedAt)}`;
+    const at = activityDate(evidence, notBefore);
+    const dKey = `${category}:${dayKey(at)}`;
+    const mKey = `${category}:${monthKey(at)}`;
     const usedToday = perDay.get(dKey) ?? 0;
     const usedThisMonth = perMonth.get(mKey) ?? 0;
 
@@ -95,14 +108,14 @@ export function computeReputationPlan(
       points,
       reason,
       evidenceId: evidence.id,
-      periodKey: dayKey(evidence.verifiedAt),
+      periodKey: dayKey(at),
     });
 
     // A week qualifies the first time a point-earning contribution lands in it.
-    const week = isoWeekKey(evidence.verifiedAt);
+    const week = isoWeekKey(at);
     if (points > 0 && !qualifiedWeeks.has(week)) {
       qualifiedWeeks.add(week);
-      const month = monthOfIsoWeek(evidence.verifiedAt);
+      const month = monthOfIsoWeek(at);
       const used = bonusPerMonth.get(month) ?? 0;
       const remaining = Math.max(0, config.consistency.monthlyCap - used);
       const bonus = Math.min(config.consistency.pointsPerWeek, remaining);

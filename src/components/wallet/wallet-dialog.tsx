@@ -35,7 +35,7 @@ export function WalletDialog({ open, onClose }: { open: boolean; onClose: () => 
         if (event.target === dialogRef.current) onClose();
       }}
       aria-labelledby="wallet-dialog-title"
-      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-3xl border border-white/10 bg-night-900 p-0 text-white shadow-2xl backdrop:bg-night-950/70"
+      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-3xl border border-white/10 bg-night-900 p-0 text-white backdrop:bg-night-950/70"
     >
       {open && <WalletDialogBody onClose={onClose} />}
     </dialog>

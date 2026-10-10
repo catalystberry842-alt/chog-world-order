@@ -61,7 +61,7 @@ export function PassportStamp({ stamp, issuedAt, size = "md", showLabel = true }
     <figure className="flex flex-col items-center gap-2 text-center">
       <svg
         viewBox="0 0 100 100"
-        className={`${sizeClass[size]} h-auto drop-shadow-[0_6px_10px_rgba(10,6,20,0.35)] transition-transform duration-200 hover:rotate-0 motion-reduce:transition-none ${
+        className={`${sizeClass[size]} h-auto transition-transform duration-200 hover:rotate-0 motion-reduce:transition-none ${
           earned ? "" : "opacity-70 grayscale"
         }`}
         style={{ rotate: `${tilt}deg` }}

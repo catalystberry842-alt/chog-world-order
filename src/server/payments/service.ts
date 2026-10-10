@@ -111,7 +111,9 @@ export async function startRegistration(services: Services, auth: AuthContext, c
 async function publishRegistered(services: Services, campaign: CampaignWithCounts, event: RegistrationEvent) {
   const collabs = requireCollabs(services);
   const now = services.now();
-  const problems = publicationProblems(campaign, now);
+  // Validate the current row, not the caller's snapshot, which may predate an edit.
+  const current = (await collabs.findCampaign(campaign.id)) ?? campaign;
+  const problems = publicationProblems(current, now);
   if (problems.length > 0) {
     await collabs.updateCampaignIfStatus(campaign.id, "draft", {
       registrationStatus: "failed",

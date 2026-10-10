@@ -1,6 +1,13 @@
 import { badRequest } from "@/server/errors";
 
-const trackingParams = /^(utm_|ref$|ref_src$|fbclid$|gclid$|s$|t$|si$|igshid$|mc_cid$|mc_eid$)/i;
+/** Tracking parameters that never identify content, on any host. */
+const trackingParams = /^(utm_|fbclid$|gclid$|igshid$|mc_cid$|mc_eid$|ref_src$)/i;
+/**
+ * Short parameters that are tracking on social hosts but content ids elsewhere
+ * (a forum's `?t=123` is a thread), so they are stripped only on these hosts.
+ */
+const socialHosts = new Set(["x.com", "youtube.com", "youtu.be", "instagram.com", "github.com", "warpcast.com", "medium.com"]);
+const socialTrackingParams = /^(s|t|si|ref)$/i;
 
 /** Hosts that serve the same content under another name. */
 const hostAliases: Record<string, string> = {
@@ -46,14 +53,17 @@ export function canonicalUrl(raw: string): string {
     throw badRequest("Evidence links must not contain credentials.", "invalid_reference");
   }
   url.hash = "";
-  for (const key of [...url.searchParams.keys()]) {
-    if (trackingParams.test(key)) url.searchParams.delete(key);
-  }
-  url.searchParams.sort();
   const bareHost = url.hostname.toLowerCase().replace(/\.$/, "").replace(/^www\./, "");
   const host = hostAliases[bareHost] ?? bareHost;
+  for (const key of [...url.searchParams.keys()]) {
+    if (trackingParams.test(key) || (socialHosts.has(host) && socialTrackingParams.test(key))) url.searchParams.delete(key);
+  }
+  url.searchParams.sort();
   let path = decodeUnreserved(url.pathname).replace(/\/{2,}/g, "/").replace(/\/+$/, "") || "/";
   path = foldCase(host, path);
+  // X ignores the user name in a status link, so any name points at the same post.
+  const status = host === "x.com" ? path.match(/^\/[^/]+\/status\/(\d+)(?:\/.*)?$/) : null;
+  if (status) return `https://x.com/i/status/${status[1]}`;
   const query = url.searchParams.toString();
   return `https://${host}${path}${query ? `?${query}` : ""}`;
 }
@@ -65,12 +75,14 @@ export function canonicalUrl(raw: string): string {
  */
 export function canonicalCodeUrl(raw: string): string {
   const canonical = canonicalUrl(raw);
-  const pull = canonical.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/.*)?$/);
+  const [path] = canonical.split("?");
+  const pull = path.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(?:pull|issues)\/(\d+)(?:\.(?:patch|diff))?(?:\/.*)?$/i);
   if (pull) {
     const [, owner, repo, number] = pull;
+    // GitHub serves a pull request at /issues/<n> too.
     return `https://github.com/${owner}/${repo}/pull/${BigInt(number).toString()}`;
   }
-  const commit = canonical.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/commit\/([0-9a-f]+)(?:\/.*)?$/i);
+  const commit = path.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/commit\/([0-9a-f]+)(?:\.(?:patch|diff))?(?:\/.*)?$/i);
   if (commit) {
     const [, owner, repo, sha] = commit;
     if (sha.length !== 40) {

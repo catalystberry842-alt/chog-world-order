@@ -12,7 +12,7 @@ export function StampCollection({ stamps, showLocked = true }: { stamps: PublicS
   const locked = showLocked ? orderedStamps.filter((definition) => !earned.has(definition.category)) : [];
 
   return (
-    <div className="paper relative overflow-hidden rounded-[2rem] p-5 shadow-[0_30px_60px_-30px_rgba(0,0,0,0.7)] sm:p-8">
+    <div className="paper relative overflow-hidden rounded-[2rem] p-5 sm:p-8">
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-sm font-semibold tracking-wide text-ink/70 uppercase">Stamps collected</p>
         <p className="text-sm font-semibold text-ink/60">

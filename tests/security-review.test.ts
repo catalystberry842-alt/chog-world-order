@@ -106,11 +106,22 @@ describe("duplicate points through link variants (fixed)", () => {
 
   it.each([
     ["https://github.com./Monad/Docs/pull/012", "https://github.com/monad/docs/pull/12"],
-    ["https://twitter.com/Chog/status/1", "https://x.com/chog/status/1"],
-    ["https://x.com//chog//status/%31", "https://x.com/chog/status/1"],
-    ["https://forum.example/t/1?UTM_SOURCE=x&S=1&lang=en", "https://forum.example/t/1?lang=en"],
+    ["https://twitter.com/Chog/status/1", "https://x.com/i/status/1"],
+    ["https://x.com//chog//status/%31", "https://x.com/i/status/1"],
+    ["https://x.com/someone_else/status/1?s=20&t=abc", "https://x.com/i/status/1"],
+    ["https://forum.example/t/1?UTM_SOURCE=x&lang=en", "https://forum.example/t/1?lang=en"],
+    ["https://github.com/monad/docs/pull/12?diff=split", "https://github.com/monad/docs/pull/12"],
+    ["https://github.com/monad/docs/pull/12.patch", "https://github.com/monad/docs/pull/12"],
+    ["https://github.com/monad/docs/issues/12", "https://github.com/monad/docs/pull/12"],
+    ["https://github.com/monad/docs/pull/12/files#diff-1", "https://github.com/monad/docs/pull/12"],
   ])("normalises %s", (variant, expected) => {
     expect(canonicalCodeUrl(variant)).toBe(expected);
+  });
+
+  it("keeps parameters that identify content on other hosts", () => {
+    // A forum's ?t= is a thread id, not tracking.
+    expect(canonicalUrl("https://forum.example/showthread.php?t=123")).toBe("https://forum.example/showthread.php?t=123");
+    expect(canonicalUrl("https://forum.example/showthread.php?t=124")).not.toBe(canonicalUrl("https://forum.example/showthread.php?t=123"));
   });
 
   it("keeps case in file paths, which GitHub treats as case-sensitive", () => {
@@ -119,6 +130,7 @@ describe("duplicate points through link variants (fixed)", () => {
 
   it("rejects short commit SHAs and accepts full ones in any case", () => {
     expect(() => canonicalCodeUrl("https://github.com/a/b/commit/abcdef1")).toThrow(/40-character/);
+    expect(() => canonicalCodeUrl("https://github.com/a/b/commit/abcdef1.patch?x=1")).toThrow(/40-character/);
     const sha = "ABCDEF0123456789ABCDEF0123456789ABCDEF01";
     expect(canonicalCodeUrl(`https://github.com/a/b/commit/${sha}`)).toBe(`https://github.com/a/b/commit/${sha.toLowerCase()}`);
   });
@@ -140,11 +152,43 @@ describe("reputation farming by backdating (fixed)", () => {
   });
 });
 
+describe("activity dates for limits (fixed)", () => {
+  it("does not lose points or weeks when a reviewer approves a backlog in one day", async () => {
+    const { activityDate, computeReputationPlan } = await import("@/lib/reputation/engine");
+    const joined = new Date("2026-09-01T00:00:00Z");
+    const reviewedAt = new Date("2026-10-09T09:00:00Z");
+    // Five pieces of work in five different post-join weeks, all approved on the same day.
+    const evidence = ["2026-09-02", "2026-09-09", "2026-09-16", "2026-09-23", "2026-09-30"].map((day, i) => ({
+      id: `e${i}`,
+      kind: "community-contribution" as const,
+      occurredAt: new Date(`${day}T12:00:00Z`),
+      verifiedAt: reviewedAt,
+    }));
+    const plan = computeReputationPlan("u", evidence, undefined, joined);
+    expect(plan.filter((event) => event.kind === "contribution" && event.points > 0)).toHaveLength(5);
+    expect(plan.filter((event) => event.kind === "consistency" && event.points > 0).length).toBeGreaterThanOrEqual(4);
+    // A claimed date before the account existed counts as the join date; a future one as the review date.
+    expect(activityDate({ ...evidence[0], occurredAt: new Date("2025-01-01") }, joined)).toEqual(joined);
+    expect(activityDate({ ...evidence[0], occurredAt: new Date("2027-01-01") }, joined)).toEqual(reviewedAt);
+  });
+});
+
 describe("evidence submission limits (fixed)", () => {
   it("accepts today's date before noon UTC", async () => {
     const { alice, submit } = await people();
     expect((await submit(alice, claim("https://forum.example/t/today", { occurredAt: "2026-10-09" }))).status).toBe(201);
     expect((await submit(alice, claim("https://forum.example/t/tomorrow", { occurredAt: "2026-10-10" }))).json.error.code).toBe("invalid_date");
+  });
+
+  it("counts unavailable claims toward the cap, so random hashes cannot flood the database", async () => {
+    const { services, alice, submit } = await people();
+    for (let i = 0; i < MAX_PENDING_CLAIMS; i += 1) {
+      const hash = `0x${(i + 1).toString(16).padStart(64, "0")}`;
+      const created = await submit(alice, { kind: "onchain-interaction", title: "Swap", summary: "Swapped on an app.", reference: hash, appId: "nope" });
+      expect(created.json.evidence.status).toBe("unavailable");
+    }
+    expect((await submit(alice, claim("https://forum.example/t/after"))).json.error.code).toBe("too_many_pending");
+    expect(services.memory.evidence).toHaveLength(MAX_PENDING_CLAIMS);
   });
 
   it("caps open claims per wallet so the review queue cannot be flooded", async () => {
@@ -290,5 +334,7 @@ describe("request handling (fixed)", () => {
     expect(rule.source).toBe("/(.*)");
     expect(headers["Content-Security-Policy"]).toContain("frame-ancestors 'none'");
     expect(headers).toMatchObject({ "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "strict-origin-when-cross-origin" });
+    // HSTS is production-only (tests run with NODE_ENV=test), so local HTTPS dev never pins localhost.
+    expect(headers["Strict-Transport-Security"]).toBeUndefined();
   });
 });

@@ -73,7 +73,7 @@ export default async function HomePage() {
         </div>
 
         <div className="relative mx-auto w-full max-w-md">
-          <div className="paper relative rotate-[-2deg] rounded-[2rem] p-6 shadow-[0_40px_80px_-30px_rgba(0,0,0,0.8)]">
+          <div className="paper relative rotate-[-2deg] rounded-[2rem] p-6">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-lg leading-none font-semibold">Chog Passport</p>
